@@ -15,5 +15,6 @@
 
 # Configuration for the AppDynamics framework
 ---
-version: 1.+
-repository_root: "{default.repository.root}/cav_nd_agent"
+version: 4.+
+#repository_root: "{default.repository.root}/cav_nd_agent"
+repository_root: https://packages.appdynamics.com/java
