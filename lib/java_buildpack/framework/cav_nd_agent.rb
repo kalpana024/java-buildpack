@@ -44,6 +44,11 @@ module JavaBuildpack
         #port java_opts, credentials
         #ssl_enabled java_opts, credentials
       end
+
+      def supports?
+        true
+      end
+      
     end
   end
 end
