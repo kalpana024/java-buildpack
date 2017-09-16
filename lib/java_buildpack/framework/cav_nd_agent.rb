@@ -33,7 +33,7 @@ module JavaBuildpack
       def release
         #credentials = @application.services.find_service(FILTER)['credentials']
         java_opts   = @droplet.java_opts
-        java_opts.add_javaagent(@droplet.sandbox + '/lib/ndmain.jar==time,ndAgentJar=/home/vcap/app/.java-buildpack/cav_nd_agent/lib/ndagent-with-dep.jar,ndHome=/home/vcap/app/.java-buildpack/cav_nd_agent,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
+        java_opts.add_javaagent(@droplet.sandbox + 'ndmain.jar=time,ndAgentJar=/home/vcap/app/.java-buildpack/cav_nd_agent/lib/ndagent-with-dep.jar,ndHome=/home/vcap/app/.java-buildpack/cav_nd_agent,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
