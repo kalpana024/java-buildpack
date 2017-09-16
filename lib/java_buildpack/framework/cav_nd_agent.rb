@@ -45,4 +45,5 @@ module JavaBuildpack
         #ssl_enabled java_opts, credentials
       end
     end
+  end
 end
