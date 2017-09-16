@@ -50,8 +50,8 @@ module JavaBuildpack
       end
 
       def agent_args
-      	root_dir = agent_dir
-      	argument = '#{root_dir}lib/ndmain.jar=time,ndAgentJar=#{root_dir}lib/ndagent-with-dep.jar,ndHome=#{root_dir},tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM'
+      	ndHome = agent_dir
+      	argument = '#{ndHome}lib/ndmain.jar=time,ndAgentJar=#{ndHome}lib/ndagent-with-dep.jar,ndHome=#{ndHome},tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM'
       	argument
       end
 
