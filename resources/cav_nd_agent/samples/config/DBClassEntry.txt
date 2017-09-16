@@ -1,0 +1,17 @@
+#DBClass|DBType
+org.postgresql.jdbc2.AbstractJdbc2Statement|Prepared
+org.postgresql.jdbc4.Jdbc4Connection|pgsql
+#Uncomment below class for Cassandra
+#This is for executeAsync() Mehtod. 
+#com.datastax.driver.core.SessionManager|cassandra
+#This is for query() Method. Which is use for fetching Address. 
+#com.datastax.driver.core.RequestHandler|cassandra
+#Uncomment below class for spring framework
+#org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate|spring
+#com.ibm.db2.jcc.b.b.b|DB2
+#com.ibm.db2.jcc.c.gg|DB2Prepared
+
+#New Generic Class support for JBoss Application
+org.apache.commons.dbcp.DelegatingPreparedStatement|Prepared
+org.apache.commons.dbcp.DelegatingConnection|jbossConnection
+

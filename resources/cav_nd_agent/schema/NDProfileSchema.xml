@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema">
+
+<xs:attribute name="ignoreGetterSetter" type="xs:string"/>
+
+  <xs:element name="instrumentationprofile">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element ref="package" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+        <xs:attribute ref="ignoreGetterSetter"/>
+    </xs:complexType>
+  </xs:element>
+  
+  <xs:element name="package">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string "/>
+        <xs:element name="functionalgroup" type="xs:string" minOccurs="0"/>
+        <xs:element name="instrument" type="xs:string"/>
+        <xs:element ref="class" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+
+  <xs:element name="class">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string "/>
+        <xs:element name="functionalgroup" type="xs:string" minOccurs="0"/>
+        <xs:element name="instrument" type="xs:string"/>
+        <xs:element name="type" type="xs:string "/>
+        <xs:element ref="method" minOccurs="0" maxOccurs="unbounded"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+  
+  <xs:element name="method">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="name" type="xs:string "/>
+        <xs:element name="functionalgroup" type="xs:string" minOccurs="0"/>
+        <xs:element name="instrument" type="xs:string"/>
+        <xs:element name="id" type="xs:integer"/>
+      </xs:sequence>
+    </xs:complexType>
+  </xs:element>
+ </xs:schema>

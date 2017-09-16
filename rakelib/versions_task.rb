@@ -52,6 +52,7 @@ module Package
       'access_logging_support'              => 'Tomcat Access Logging Support',
       'agent'                               => 'Java Memory Assistant Agent',
       'app_dynamics_agent'                  => 'AppDynamics Agent',
+      'cav_nd_agent'						=> 'Cavisson NetDiagnostics Agent'
       'clean_up'                            => 'Java Memory Assistant Clean Up',
       'client_certificate_mapper'           => 'Client Certificate Mapper',
       'container_customizer'                => 'Spring Boot Container Customizer',

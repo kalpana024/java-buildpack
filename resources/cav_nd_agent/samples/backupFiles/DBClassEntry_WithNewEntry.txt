@@ -1,0 +1,5 @@
+#DBClass|DBType
+org.postgresql.jdbc2.AbstractJdbc2Statement|pgsql
+org.postgresql.jdbc4.Jdbc4Connection|pgsql
+oracle.jdbc.driver.OraclePreparedStatementWrapper|oracle
+oracle.jdbc.OracleConnectionWrapper|oracle

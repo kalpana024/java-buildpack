@@ -41,6 +41,7 @@ frameworks:
   - "JavaBuildpack::Framework::MultiBuildpack"
   - "JavaBuildpack::Framework::AppDynamicsAgent"
   - "JavaBuildpack::Framework::AspectjWeaverAgent"
+  - "JavaBuildpack::Framework::CavNdAgent"
   - "JavaBuildpack::Framework::ClientCertificateMapper"
   - "JavaBuildpack::Framework::ContainerCustomizer"
   - "JavaBuildpack::Framework::ContainerSecurityProvider"

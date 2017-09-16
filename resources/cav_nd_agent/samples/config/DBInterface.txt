@@ -1,0 +1,3 @@
+#DBInterfaceName|Type
+java/sql/Connection|SQL
+java.sql.PreparedStatement|sql
