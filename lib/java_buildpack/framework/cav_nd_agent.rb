@@ -33,7 +33,7 @@ module JavaBuildpack
       def release
         #credentials = @application.services.find_service(FILTER)['credentials']
         java_opts   = @droplet.java_opts
-        java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,ndAgentJar=' + @droplet.sandbox + 'lib/ndagent-with-dep.jar,ndHome=' + @droplet.sandbox + ',tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
+        java_opts.add_javaagent(argument)
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
@@ -43,6 +43,15 @@ module JavaBuildpack
         #host_name java_opts, credentials
         #port java_opts, credentials
         #ssl_enabled java_opts, credentials
+      end
+
+      def agent_dir
+        @droplet.sandbox + 'cav_nd_agent'
+      end
+
+      def agent_args
+      	argument = agent_dir + 'lib/ndmain.jar=time,ndAgentJar=' + agent_dir + '/lib/ndagent-with-dep.jar,ndHome=' + agent_dir + ',tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM'
+      	argument
       end
 
       def supports?
