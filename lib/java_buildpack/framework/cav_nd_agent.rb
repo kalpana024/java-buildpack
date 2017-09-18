@@ -50,8 +50,8 @@ module JavaBuildpack
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
         java_opts.add_javaagent_with_props(@droplet.sandbox + 'lib/ndmain.jar=time', 
         										TIER 		=> 'default',
-        										ND_AGENT_JAR 	=> '#{ndHome}lib/ndagent-with-dep.jar',
-        										ND_HOME 		=> '#{ndHome}')
+        										ND_AGENT_JAR 	=> @droplet.sandbox + 'lib/ndagent-with-dep.jar',
+        										ND_HOME 		=> @droplet.sandbox)
 
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
 
