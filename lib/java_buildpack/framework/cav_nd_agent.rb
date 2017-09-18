@@ -16,7 +16,7 @@
 require 'fileutils'
 require 'java_buildpack/component/versioned_dependency_component'
 require 'java_buildpack/framework'
-require 'java_buildpack/util/qualify_path'
+#require 'java_buildpack/util/qualify_path'
 
 module JavaBuildpack
   module Framework
@@ -53,7 +53,7 @@ module JavaBuildpack
         #										ND_AGENT_JAR 	=> '#{qualify_path ndHome}lib/ndagent-with-dep.jar',
         #										ND_HOME 		=> '#{qualify_path ndHome}')
 
-        java_opts.add_javaagent('#{ndHome}lib/ndmain.jar')
+        java_opts.add_javaagent('#{ndHome}lib/ndmain.jar=time')
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
