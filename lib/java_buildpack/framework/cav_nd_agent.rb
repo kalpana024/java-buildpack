@@ -63,7 +63,16 @@ module JavaBuildpack
         #ssl_enabled java_opts, credentials
       end
 
+      private
+
+      TIER = 'tier'.freeze
+
+      ND_AGENT_JAR = 'ndAgentJar'.freeze
+
+      ND_HOME = 'ndHome'.freeze
+
      
+      protected
 
       def supports?
         true
