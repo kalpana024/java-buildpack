@@ -47,15 +47,15 @@ module JavaBuildpack
       def release
         #credentials = @application.services.find_service(FILTER)['credentials']
         java_opts   = @droplet.java_opts
-        ndHome = @droplet.sandbox
-        print '#{agent_dir}'
-        transFormedNdHome = qualify_path agent_dir
-        print '#{transFormedNdHome}'
+        #ndHome = @droplet.sandbox
+        #print '#{agent_dir}'
+        #transFormedNdHome = qualify_path agent_dir
+        #print '#{transFormedNdHome}'
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
         java_opts.add_javaagent_with_props(@droplet.sandbox + 'lib/ndmain.jar=time', 
         										TIER 		=> 'default',
-        										ND_AGENT_JAR 	=> '#{transFormedNdHome}lib/ndagent-with-dep.jar',
-        										ND_HOME 		=> '#{transFormedNdHome}')
+        										ND_AGENT_JAR 	=> '$PWD/.java-buildpack/cav_nd_agent/lib/ndagent-with-dep.jar',
+        										ND_HOME 		=> '$PWD/.java-buildpack/cav_nd_agent')
 
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
 
