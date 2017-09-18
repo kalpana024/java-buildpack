@@ -16,7 +16,7 @@
 require 'fileutils'
 require 'java_buildpack/component/versioned_dependency_component'
 require 'java_buildpack/framework'
-#require 'java_buildpack/util/qualify_path'
+require 'java_buildpack/util/qualify_path'
 
 module JavaBuildpack
   module Framework
@@ -47,11 +47,14 @@ module JavaBuildpack
         #credentials = @application.services.find_service(FILTER)['credentials']
         java_opts   = @droplet.java_opts
         ndHome = @droplet.sandbox
+        print '#{ndHome}'
+        transFormedNdHome = qualify_path ndHome
+        print '#{transFormedNdHome}'
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
         java_opts.add_javaagent_with_props(@droplet.sandbox + 'lib/ndmain.jar=time', 
         										TIER 		=> 'default',
-        										ND_AGENT_JAR 	=> @droplet.sandbox + 'lib/ndagent-with-dep.jar',
-        										ND_HOME 		=> @droplet.sandbox)
+        										ND_AGENT_JAR 	=> '#{transFormedNdHome}lib/ndagent-with-dep.jar',
+        										ND_HOME 		=> '#{transFormedNdHome}')
 
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
 
