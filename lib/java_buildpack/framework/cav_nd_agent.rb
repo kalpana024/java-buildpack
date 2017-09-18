@@ -20,6 +20,7 @@ require 'java_buildpack/util/qualify_path'
 
 module JavaBuildpack
   module Framework
+  	include JavaBuildpack::Util
 
     # Encapsulates the functionality for enabling zero-touch NetDiagnostics support.
     class CavNdAgent < JavaBuildpack::Component::VersionedDependencyComponent
