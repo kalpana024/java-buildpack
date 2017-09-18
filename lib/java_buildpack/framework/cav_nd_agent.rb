@@ -29,11 +29,24 @@ module JavaBuildpack
         @droplet.copy_resources
       end
 
+       def agent_dir
+        dir = @droplet.sandbox
+        dir
+      end
+
+      def agent_args
+      	ndHome = agent_dir
+      	argument = '#{ndHome}lib/ndmain.jar=time,ndAgentJar=#{ndHome}lib/ndagent-with-dep.jar,ndHome=#{ndHome},tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM'
+      	#argument = '#{agent_dir}lib/ndmain.jar=time'
+      	argument
+      end
+
       # (see JavaBuildpack::Component::BaseComponent#release)
       def release
         #credentials = @application.services.find_service(FILTER)['credentials']
         java_opts   = @droplet.java_opts
-        java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
+        #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
+        java_opts.add_javaagent(agent_args)
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
@@ -45,17 +58,7 @@ module JavaBuildpack
         #ssl_enabled java_opts, credentials
       end
 
-      def agent_dir
-        dir = @droplet.sandbox + 'cav_nd_agent'
-        dir
-      end
-
-      def agent_args
-      	ndHome = agent_dir
-      	#argument = '#{ndHome}lib/ndmain.jar=time,ndAgentJar=#{ndHome}lib/ndagent-with-dep.jar,ndHome=#{ndHome},tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM'
-      	argument = '#{agent_dir}lib/ndmain.jar=time'
-      	argument
-      end
+     
 
       def supports?
         true
