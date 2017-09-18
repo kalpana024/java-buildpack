@@ -33,7 +33,7 @@ module JavaBuildpack
       def release
         #credentials = @application.services.find_service(FILTER)['credentials']
         java_opts   = @droplet.java_opts
-        java_opts.add_javaagent(agent_args)
+        java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
