@@ -49,7 +49,7 @@ module JavaBuildpack
         java_opts   = @droplet.java_opts
         ndHome = @droplet.sandbox
         print '#{agent_dir}'
-        transFormedNdHome = '#{qualify_path agent_dir}'
+        transFormedNdHome = qualify_path agent_dir
         print '#{transFormedNdHome}'
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
         java_opts.add_javaagent_with_props(@droplet.sandbox + 'lib/ndmain.jar=time', 
