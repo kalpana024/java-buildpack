@@ -53,7 +53,7 @@ module JavaBuildpack
         #										ND_AGENT_JAR 	=> '#{qualify_path ndHome}lib/ndagent-with-dep.jar',
         #										ND_HOME 		=> '#{qualify_path ndHome}')
 
-        java_opts.add_javaagent('#{ndHome}lib/ndmain.jar=time')
+        java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
