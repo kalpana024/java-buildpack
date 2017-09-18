@@ -36,8 +36,8 @@ module JavaBuildpack
 
       def agent_args
       	ndHome = agent_dir
-      	argument = '#{ndHome}lib/ndmain.jar=time,ndAgentJar=#{ndHome}lib/ndagent-with-dep.jar,ndHome=#{ndHome},tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM'
-      	#argument = '#{agent_dir}lib/ndmain.jar=time'
+      	#argument = '#{ndHome}lib/ndmain.jar=time,ndAgentJar=#{ndHome}lib/ndagent-with-dep.jar,ndHome=#{ndHome},tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM'
+      	argument = '#{agent_dir}lib/ndmain.jar'
       	argument
       end
 
@@ -46,7 +46,12 @@ module JavaBuildpack
         #credentials = @application.services.find_service(FILTER)['credentials']
         java_opts   = @droplet.java_opts
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
-        java_opts.add_javaagent(agent_args)
+        java_opts.add_javaagent_with_props(agent_args, 
+        										tier => default,
+        										ndcHost => 10.10.40.93,
+        										ndcPort => 7892,
+        										ndAgentJar => @droplet.sandbox + 'lib/ndagent-with-dep.jar',
+        										ndHome => @droplet.sandbox)
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
