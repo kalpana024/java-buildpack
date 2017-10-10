@@ -57,7 +57,7 @@ module JavaBuildpack
         										ND_AGENT_JAR 	=> '$PWD/.java-buildpack/cav_nd_agent/lib/ndagent-with-dep.jar',
         										ND_HOME 		=> '$PWD/.java-buildpack/cav_nd_agent',
         										BCI_LOGS		=> 'OUTPUT_STREAM',
-        										NDC_HOST		=> '182.71.119.222',
+        										NDC_HOST		=> '35.161.39.194',
         										NDC_PORT		=> '7892')
 
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
