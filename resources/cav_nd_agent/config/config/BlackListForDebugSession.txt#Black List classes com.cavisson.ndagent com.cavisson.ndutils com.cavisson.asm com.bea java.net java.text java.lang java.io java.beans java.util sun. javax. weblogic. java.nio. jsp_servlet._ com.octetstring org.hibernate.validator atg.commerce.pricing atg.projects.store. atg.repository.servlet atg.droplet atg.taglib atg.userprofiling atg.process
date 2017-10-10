@@ -1,0 +1,25 @@
+#Black List classes
+com.cavisson.ndagent
+com.cavisson.ndutils
+com.cavisson.asm
+com.bea
+java.net
+java.text
+java.lang
+java.io
+java.beans
+java.util
+sun.
+javax.
+weblogic.
+java.nio.
+jsp_servlet._
+com.octetstring
+org.hibernate.validator
+atg.commerce.pricing
+atg.projects.store.
+atg.repository.servlet
+atg.droplet
+atg.taglib
+atg.userprofiling
+atg.process
