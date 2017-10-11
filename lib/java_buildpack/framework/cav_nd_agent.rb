@@ -53,7 +53,7 @@ module JavaBuildpack
         #print '#{transFormedNdHome}'
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time,tier=default,ndcHost=10.10.40.93,ndcPort=7892,BCILoggingMode=OUTPUT_STREAM')
         java_opts.add_javaagent_with_props(@droplet.sandbox + 'lib/ndmain.jar=time', 
-        										TIER 			=> ENV['CAV_TIER'],
+        										TIER 			=> "$ENV['CAV_TIER']",
         										ND_AGENT_JAR 	=> '$PWD/.java-buildpack/cav_nd_agent/lib/ndagent-with-dep.jar',
         										ND_HOME 		=> '$PWD/.java-buildpack/cav_nd_agent',
         										BCI_LOGS		=> 'OUTPUT_STREAM',
