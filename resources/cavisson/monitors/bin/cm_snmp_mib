@@ -1,0 +1,597 @@
+################################################################################################
+# Name  : cm_snmp_mib
+# Usage :
+# Purpose: This shell outputs snmp data based on input file
+# Output :
+#          2 0 0 0 0 0 0 0 0 13 0
+# Initial version : Wednesday, September 17 2008
+# Modification    : Monday, January 12 2009
+# Author Name     : Prachi Kumari
+
+DEBUG_LEVEL=0
+MIB_INP_FILE=""
+SNMP_AGENT_SERVER=127.0.0.1
+COMMUNITY=""
+#-v 1 | 2c | 3
+PROTO_VERSION=1
+#Initially index of array is set to zero
+IDX=0
+# Default value for each field, except TYPE & RELATIVE
+def_val="NA"
+# Default value of field TYPE is "cumulative" 
+def_TYPE="cumulative"
+# Default value of field RELATIVE is "yes"
+def_RELATIVE="yes"
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh 
+INTERVAL_SECS=$MON_FREQUENCY
+SNMP_TMP_FILE=$CAV_MON_TMP_DIR/file_without_comments$$
+
+error_log_and_exit()
+{
+  error_log "$*"
+  exit -1
+} 
+
+error_log()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+} 
+
+debug_log()
+{   
+  if [ "X$DEBUG_LEVEL" = "X0" ]; then
+    return
+  else
+    #echo "Debug: $*"
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+} 
+
+set_error_log_file()
+{ 
+  debug_log "CAV_MON_HOME=$CAV_MON_HOME, MON_TEST_RUN=$MON_TEST_RUN, VECTOR_NAME=$VECTOR_NAME"
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_snmp_mib_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_snmp_mib_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  else 
+    DEBUG_LOG_FILE="/tmp/cm_snmp_mib_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="/tmp/cm_snmp_mib_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+#In version 3, community is not required & username is required.
+#Hence exit : if community is present, or if user not present 
+check_for_community_and_username_v3()
+{
+  if [ "X$COMMUNITY" != "X" ];then
+    echo "Community arugment is not valid for SNMP procotol version v3"
+    error_log_and_exit "Community arugment is not valid for SNMP procotol version v3"
+  fi
+
+  if [ "X$USERNAME" = "X" ];then
+    echo "Mandatory argument user name is required for SNMP procotol version v3"
+    error_log_and_exit "Mandatory argument user name is required for SNMP procotol version v3"
+  fi
+}
+
+#If SECURITY_LEVEL=noAuthNoPriv, AUTH_PROTOCOL & ENCRY_PROTOCOL not required.
+#Hence exit : either if AUTH_PROTOCOL/AUTH_PARAMS is present or ENCRY_PROTOCOL/PRIV_PARAMS is present
+check_for_auth_and_encry_protocol()
+{
+  if [ "X$AUTH_PROTOCOL" != "X" -o "X$ENCRY_PROTOCOL" != "X" -o "X$AUTH_PARAMS" != "X" -o "X$PRIV_PARAMS" != "X" ];then
+    echo "Authentication and Encryption arugments are just not valid for default security level:noAuthNoPriv"
+    error_log_and_exit "Authentication and Encryption arugments are just not valid for default security level:noAuthNoPriv"
+  fi
+}
+
+#In security_level = authNoPriv, ENCRY_PROTOCOL or ENCRY_PASSWORD not required.
+#Hence exit : either if ENCRY_PROTOCOL is present or ENCRY_PASSWORD is present
+check_for_encry_protocol()
+{
+  if [ "X$ENCRY_PROTOCOL" != "X" -o "X$PRIV_PARAMS" != "X" ];then
+    echo "Encryption arugments are not valid for security level:authNoPriv"
+    error_log_and_exit "Encryption arugments are not valid for security level:authNoPriv"
+  fi
+}
+
+#Validating arguments entered by user for snmp v3
+validate_snmp_v3_arguments()
+{
+  if [ "X$SECURITY_LEVEL" = "X" -o "X$SECURITY_LEVEL" = "XnoAuthNoPriv" ];then
+    debug_log "Setting default security level to noAuthNoPriv"
+    SECURITY_LEVEL=noAuthNoPriv
+    check_for_auth_and_encry_protocol
+    set_cmd_for_v3
+  elif [ "$SECURITY_LEVEL" = "authNoPriv" ];then
+    debug_log "security level is : $SECURITY_LEVEL"
+    check_for_encry_protocol
+    SNMP_CMD_V3_ARGS="-a $AUTH_PROTOCOL -A $AUTH_PARAMS"
+    set_cmd_for_v3
+  elif [ "$SECURITY_LEVEL" = "authPriv" ];then
+    debug_log "security level is : $SECURITY_LEVEL"
+    SNMP_CMD_V3_ARGS="-a $AUTH_PROTOCOL -A $AUTH_PARAMS -x $ENCRY_PROTOCOL -X $PRIV_PARAMS"
+    set_cmd_for_v3
+  else
+    echo "security_level argument entered by user is incorrect"
+    error_log_and_exit "security_level argument entered by user is incorrect"
+  fi
+}
+
+#Validating arguments entered by user for snmp v1 / v2c
+validate_snmp_v1_2c_arguments()
+{ 
+  if [ "X$USERNAME" != "X" ];then
+    echo "username is not valid for v1 or v2c"
+    error_log_and_exit "username is not valid for v1 or v2c"
+  fi
+  if [ "X$SECURITY_LEVEL" != "X" ];then
+    echo "security_level is not valid for v1 or v2c"
+    error_log_and_exit "security_level is not valid for v1 or v2c"
+  fi
+  if [ "X$AUTH_PROTOCOL" != "X" ];then
+    echo "authentication_protocol is not valid for v1 or v2c"
+    error_log_and_exit "authentication_protocol is not valid for v1 or v2c"
+  fi
+  if [ "X$AUTH_PARAMS" != "X" ];then
+    echo "authentication_params is not valid for v1 or v2c"
+    error_log_and_exit "authentication_params is not valid for v1 or v2c"
+  fi
+  if [ "X$ENCRY_PROTOCOL" != "X" ];then
+    echo "encryption_protocol is not valid for v1 or v2c"
+    error_log_and_exit "encryption_protocol is not valid for v1 or v2c"
+  fi
+  if [ "X$PRIV_PARAMS" != "X" ];then
+    echo "encryption_params is not valid for v1 or v2c"
+    error_log_and_exit "encryption_params is not valid for v1 or v2c"
+  fi
+}
+
+
+# validate arguments and set snmpget cmd accordingly.
+validate_and_set_snmp_cmd()
+{
+  debug_log "validate_and_set_snmp_cmd() - Method called"
+
+  if [ "$PROTO_VERSION" = "3" ];then
+    check_for_community_and_username_v3
+    validate_snmp_v3_arguments
+
+  elif [ "$PROTO_VERSION" = "1" -o "$PROTO_VERSION" = "2c" ];then
+    validate_snmp_v1_2c_arguments
+    set_cmd_for_v1_v2c
+    
+  else
+    echo "Invalid SNMP protocol version ($PROTO_VERSION)"
+    error_log_and_exit "Invalid SNMP protocol version ($PROTO_VERSION)"
+  fi
+}
+
+# Setting snmpget command for version v3
+set_cmd_for_v3()
+{
+  SNMP_CMD="snmpget -m ALL -Os -Ot -OQ -Oe -v $PROTO_VERSION -u $USERNAME -l $SECURITY_LEVEL $SNMP_CMD_V3_ARGS $SNMP_AGENT_SERVER"
+  debug_log "snmpget command : $SNMP_CMD is successfully set for v3"
+}
+
+# Setting snmpget command for version 1/2c.
+set_cmd_for_v1_v2c()
+{
+  SNMP_CMD="snmpget -m ALL -Os -Ot -OQ -Oe -v $PROTO_VERSION -c $COMMUNITY $SNMP_AGENT_SERVER "
+  debug_log "snmpget command : $SNMP_CMD is successfully set for v1/v2c"
+}
+
+Usage()
+{ 
+  echo "$*"
+  echo "Usage: cm_snmp_mib -i <interval in secs> -f <input file> [ -v <version 1 or 2c or 3(default 1)> -c <community (default public)> -u <user> -l <security_level> -a <auth_protocol> -A <auth_params> -x <encry_protocol> -X <priv_params> -s <server name (default 127.0.0.1)> -D <debug_log 0/1>]"
+
+  error_log "$*"
+
+  error_log "Usage: cm_snmp_mib -i <interval in secs> -f <input file> [ -v <version 1 or 2c or 3(default 1)> -c <community (default public)> -u <user> -l <security_level> -a <auth_protocol> -A <auth_params> -x <encry_protocol> -X <priv_params> -s <server name (default 127.0.0.1)> -D <debug_log 0/1>]"
+
+  exit -1
+}
+
+CMD_ERROR_LOG=$CAV_MON_TMP_DIR/snmp_cmd.err.$$
+CMD_OUTPUT_LOG=$CAV_MON_TMP_DIR/snmp_cmd.out.$$
+
+remove_cmd_out_file()
+{
+  rm -f $CMD_ERROR_LOG $CMD_OUTPUT_LOG
+}
+
+# Executing the snmpget command.
+run_cmd()
+{
+  $SNMP_CMD $SNMP_MIBS 1>$CMD_OUTPUT_LOG 2>$CMD_ERROR_LOG
+  if [ $? != 0 ];then
+    echo "Error in running snmpget command which is used to get the data using SNMP '$SNMP_CMD' - `cat $CMD_ERROR_LOG`"
+    echo "MIBS: $SNMP_MIBS"
+    remove_cmd_out_file
+    rm -f $TMP_FILE $SNMP_TMP_FILE
+    error_log_and_exit "Error in running snmpget command which is used to get the data using SNMP '$SNMP_CMD' - `cat $CMD_ERROR_LOG` & MIBS: $SNMP_MIBS"
+  fi
+  debug_log "snmpget command executed successfully."
+}
+
+# Creating array for OID present in input file.
+set_OID_array()
+{
+  var=`echo $inputline | cut -d'|' -f1`
+  if [ "X$var" != "X" ];then
+    OID[$IDX]=$var
+  else
+    echo "Wrong Input file format - missing mandatory field(OID)."
+    error_log_and_exit "Wrong Input file format - missing mandatory field(OID)."
+  fi
+}
+
+# Creating array for TYPE of oid.
+set_TYPE_array()
+{
+  var=`echo $inputline | cut -d'|' -f2`
+  if [ "X$var" = "Xcumulative" -o "X$var" = "Xsample" -o "X$var" = "Xrate" ];then
+    TYPE[$IDX]=$var
+  else
+    TYPE[$IDX]=$def_TYPE
+  fi
+}
+
+# Creating array for RELATIVE values of oid.
+set_RELATIVE_array()
+{
+  var=`echo $inputline | cut -d'|' -f3`
+  if [ "X$var" = "Xyes" -o "X$var" = "Xno" ];then
+    RELATIVE[$IDX]=$var
+  else
+    RELATIVE[$IDX]=$def_RELATIVE
+  fi
+}
+
+# Creating array for FORMULA to further apply these formulas over data value obtained.  
+set_FORMULA_array()
+{
+  var=`echo $inputline | cut -d'|' -f4`
+
+  if [ "X$var" = "XDivideBy" -o "X$var" = "XMultiplyBy" -o "X$var" = "XMSToSec" -o "X$var" = "XPerSec" -o "X$var" = "XNA" ];then
+    FORMULA[$IDX]=$var
+  else
+    echo "Incorrect Formula"
+    error_log_and_exit "Incorrect Formula"
+  fi
+}
+
+# Creating array for FORMULA_VALUE.
+set_FORMULA_VALUE_array()
+{
+  var=`echo $inputline | cut -d'|' -f5`
+
+  if [ "X$var" = "X" ];then
+    FORMULA_VALUE[$IDX]=$def_val
+  else
+    FORMULA_VALUE[$IDX]=$var
+  fi
+
+  if [ FORMULA[$IDX] = "XPerSec" ];then
+    FORMULA_VALUE[$IDX]=$INTERVAL_SECS
+  fi
+}
+
+#Putting values of each field into their respective array
+#default field value is NA
+set_array()
+{
+  set_OID_array
+  if [ $num_field -ge 2 ];then
+    set_TYPE_array
+  fi
+  if [ $num_field -ge 3 ];then
+    set_RELATIVE_array
+  fi
+  if [ $num_field -ge 4 ];then
+    set_FORMULA_array
+  fi
+  if [ $num_field -ge 5 -a $num_field -le 13 ];then
+    set_FORMULA_VALUE_array
+  fi
+}
+
+# Format of Input_File is: 
+
+#                         OID|Type|Relative|Formula|FormulaValue|Index|F1|F2|F3|F4|F5|GraphName|GraphDescription
+
+# Only OID is mandatory field, rest all other fields are optional.
+# Calculating total no. of fields for each line of pipe separated input_file & Storing values of each field into their res# pective array.
+init_mib_info()
+{
+  debug_log "init_mib_info function called to insert field values into their respective array."
+
+  sed '/^ *#/d;s/#.*//' $MIB_INP_FILE > $SNMP_TMP_FILE
+  while read inputline
+  do
+    num_field=`echo $inputline | awk -F'|' '{print NF}'`
+    debug_log "Total number of fields in this line = $num_field"
+    set_array
+    IDX=`expr $IDX + 1`
+  done < $SNMP_TMP_FILE
+  NUM_OF_OID=${#OID[@]}
+  debug_log "Total no. of lines in the input file = $NUM_OF_OID"
+  SNMP_MIBS=`cat $SNMP_TMP_FILE | awk -F'|' '{printf $1 " "}'`
+  debug_log "SNMP_MIBS = $SNMP_MIBS"
+}
+
+# Calculating Current Data.
+get_cur_data()
+{ 
+  debug_log "get_cur_data function called."
+  run_cmd
+  CUR_SNMP_DATA=(`cat $CMD_OUTPUT_LOG | awk -F'=' '{printf $2" "}'`)
+  debug_log "stored current values."
+  remove_cmd_out_file
+}
+
+# Update PREV_SNMP_DATA
+update_prev_data()
+{
+  debug_log "update_prev_data function called."
+  PREV_SNMP_DATA=(`echo ${CUR_SNMP_DATA[@]}`)
+  debug_log "PREV_SNMP_DATA Updated."
+}
+
+# Calculating Initial Data.
+init_value()
+{
+  debug_log "init_value function called."
+  run_cmd
+  INIT_SNMP_DATA=(`cat $CMD_OUTPUT_LOG | awk -F'=' '{printf $2" "}'`)
+  PREV_SNMP_DATA=(`echo ${INIT_SNMP_DATA[@]}`)                  # PREV_SNMP_DATA is set to initial value
+  debug_log "stored initial values."
+  remove_cmd_out_file
+}
+
+TMP_FILE=$CAV_MON_TMP_DIR/snmp_final_output_data.$$
+
+# Here we check and apply the formula on calculated diff i.e. TMP_DATA
+check_and_apply_formula_on_TMP_DATA()
+{
+  debug_log "check_and_apply_formula_on_TMP_DATA function called, i= $i, FORMULA=${FORMULA[$i]}"
+
+  debug_log "TMP_DATA=$TMP_DATA, FORMULA_VALUE[$i]=${FORMULA_VALUE[$i]}"
+
+  if [ "X${FORMULA[$i]}" = "XDivideBy" ];then
+    if [ $BC_AVAILABLE -eq 1 ];then 
+      TMP_DATA_AFTER_FORMULA[$i]=`(echo " scale=3; $TMP_DATA / ${FORMULA_VALUE[$i]}" | bc)`
+    else
+      TMP_DATA_AFTER_FORMULA[$i]=`(awk -v "var1=$TMP_DATA" -v "var2=${FORMULA_VALUE[$i]}" 'BEGIN{printf "%.3f", (var1 / var2)}')`
+    fi
+    debug_log "${FORMULA[$i]} formula executed successfully"
+
+  elif [ "X${FORMULA[$i]}" = "XMultiplyBy" ];then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      TMP_DATA_AFTER_FORMULA[$i]=`(echo " scale=3; $TMP_DATA * ${FORMULA_VALUE[$i]}" | bc)`
+    else
+      TMP_DATA_AFTER_FORMULA[$i]=`(awk -v "var1=$TMP_DATA" -v "var2=${FORMULA_VALUE[$i]}" 'BEGIN{printf "%.3f", (var1 * var2)}')`
+    fi
+    debug_log "${FORMULA[$i]} formula executed successfully"
+
+  elif [ "X${FORMULA[$i]}" = "XMSToSec" ];then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      TMP_DATA_AFTER_FORMULA[$i]=`(echo " scale=3; $TMP_DATA / 1000" | bc)`
+    else 
+      TMP_DATA_AFTER_FORMULA[$i]=`(awk -v "var1=$TMP_DATA" 'BEGIN{printf "%.3f", (var1 / 1000)}')`
+    fi
+    debug_log "${FORMULA[$i]} formula executed successfully"
+
+  elif [ "X${FORMULA[$i]}" = "XPerSec" ];then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      TMP_DATA_AFTER_FORMULA[$i]=`(echo " scale=3; $TMP_DATA / $INTERVAL_SECS" | bc)`
+    else
+      TMP_DATA_AFTER_FORMULA[$i]=`(awk -v "var1=$TMP_DATA" -v "var2=$INTERVAL_SECS" 'BEGIN{printf "%.3f", (var1 / var2)}')`
+    fi
+    debug_log "${FORMULA[$i]} formula executed successfully"
+
+  else 
+    debug_log "Formula not mentioned in the input file, hence tmp_data without applying formula is taken as output"
+    #echo ${CUR_SNMP_DATA[$i]} >> $TMP_FILE
+     echo  $TMP_DATA >> $TMP_FILE
+  fi
+
+   if [ "X${FORMULA[$i]}" = "XDivideBy" -o "X${FORMULA[$i]}" = "XMultiplyBy" -o "X${FORMULA[$i]}" = "XMSToSec" -o "X${FORMULA[$i]}" = "XPerSec" ];then
+     echo ${TMP_DATA_AFTER_FORMULA[$i]} >> $TMP_FILE 
+     debug_log "Value obtained after execution of the formula is = ${TMP_DATA_AFTER_FORMULA[$i]}"
+   fi
+}
+
+# Here we check and apply the formula on current data
+check_and_apply_formula_on_CUR_DATA()
+{
+  debug_log "check_and_apply_formula_on_CUR_DATA function called, i= $i, FORMULA=${FORMULA[$i]}"
+
+  debug_log "TMP_DATA=$TMP_DATA, FORMULA_VALUE[$i]=${FORMULA_VALUE[$i]}"
+
+  if [ "X${FORMULA[$i]}" = "XDivideBy" ];then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      TMP_DATA_AFTER_FORMULA[$i]=`(echo " scale=3; ${CUR_SNMP_DATA[$i]} / ${FORMULA_VALUE[$i]}" | bc)`
+    else
+      TMP_DATA_AFTER_FORMULA[$i]=`(awk -v "var1=${CUR_SNMP_DATA[$i]}" -v "var2=${FORMULA_VALUE[$i]}" 'BEGIN{printf "%.3f", (var1 / var2)}')`
+    fi
+    debug_log "${FORMULA[$i]} formula executed successfully"
+
+  elif [ "X${FORMULA[$i]}" = "XMultiplyBy" ];then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      TMP_DATA_AFTER_FORMULA[$i]=`(echo " scale=3; ${CUR_SNMP_DATA[$i]} * ${FORMULA_VALUE[$i]}" | bc)`
+    else
+      TMP_DATA_AFTER_FORMULA[$i]=`(awk -v "var1=${CUR_SNMP_DATA[$i]}" -v "var2=${FORMULA_VALUE[$i]}" 'BEGIN{printf "%.3f", (var1 * var2)}')`
+    fi
+    debug_log "${FORMULA[$i]} formula executed successfully"
+
+  elif [ "X${FORMULA[$i]}" = "XMSToSec" ];then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      TMP_DATA_AFTER_FORMULA[$i]=`(echo " scale=3; ${CUR_SNMP_DATA[$i]} / 1000" | bc)`
+    else
+      TMP_DATA_AFTER_FORMULA[$i]=`(awk -v "var1=${CUR_SNMP_DATA[$i]}" 'BEGIN{printf "%.3f", (var1 / 1000)}')`
+    fi
+    debug_log "${FORMULA[$i]} formula executed successfully"
+
+  elif [ "X${FORMULA[$i]}" = "XPerSec" ];then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      TMP_DATA_AFTER_FORMULA[$i]=`(echo " scale=3; ${CUR_SNMP_DATA[$i]} / $INTERVAL_SECS" | bc)`
+    else
+      TMP_DATA_AFTER_FORMULA[$i]=`(awk -v "var1=${CUR_SNMP_DATA[$i]}" -v "var2=$INTERVAL_SECS" 'BEGIN{printf "%.3f", (var1 / var2)}')`
+    fi
+    debug_log "${FORMULA[$i]} formula executed successfully"
+
+  else
+    debug_log "Formula not mentioned in the input file, hence cur_data without applying formula is taken as output"
+    echo ${CUR_SNMP_DATA[$i]} >> $TMP_FILE
+  fi
+
+  if [ "X${FORMULA[$i]}" = "XDivideBy" -o "X${FORMULA[$i]}" = "XMultiplyBy" -o "X${FORMULA[$i]}" = "XMSToSec" -o "X${FORMULA[$i]}" = "XPerSec" ];then
+    echo ${TMP_DATA_AFTER_FORMULA[$i]} >> $TMP_FILE
+    debug_log "Value obtained after execution of the formula is = ${TMP_DATA_AFTER_FORMULA[$i]}"
+  fi
+}
+
+# Here we apply formula on data value
+# either :
+#         * we calculate difference i.e. current_snmp_data - initial_snmp_data
+#         * apply formula on difference obtained.
+#                       or
+#         * apply formula on cur_data.
+get_data()
+{
+  debug_log "get_data function called."
+   
+  get_cur_data
+
+  NUM_DATA_FIELD=${#CUR_SNMP_DATA[@]}
+  if [ $NUM_DATA_FIELD -eq 0 ];then
+    error_log_and_exit "we are not getting any data. Hence exiting.."
+  fi
+     
+  debug_log "NUM_DATA_FIELD is : $NUM_DATA_FIELD"
+  debug_log "init value: ${INIT_SNMP_DATA[@]}"
+  debug_log "cur_value: ${CUR_SNMP_DATA[@]}"  
+  debug_log "prev_value: ${PREV_SNMP_DATA[@]}"  
+  i=0
+  while true
+    do
+      debug_log "CUR_SNMP_DATA = ${CUR_SNMP_DATA[$i]}" 
+      debug_log "INIT_SNMP_DATA = ${INIT_SNMP_DATA[$i]}"
+      debug_log "PREV_SNMP_DATA = ${PREV_SNMP_DATA[$i]}"
+      debug_log "TYPE = ${TYPE[$i]}"
+      debug_log "RELATIVE = ${RELATIVE[$i]}"
+
+      if [ "X${TYPE[$i]}" = "Xrate" ];then
+        TMP_DATA=`expr ${CUR_SNMP_DATA[$i]} - ${PREV_SNMP_DATA[$i]}`
+        check_and_apply_formula_on_TMP_DATA               
+      elif [ "X${TYPE[$i]}" = "Xcumulative" -a "X${RELATIVE[$i]}" = "Xyes" ];then
+        TMP_DATA=`expr ${CUR_SNMP_DATA[$i]} - ${INIT_SNMP_DATA[$i]}`
+        check_and_apply_formula_on_TMP_DATA
+      else
+        check_and_apply_formula_on_CUR_DATA
+      fi
+ 
+      i=`expr $i + 1`
+      
+      if [ $i -eq $NUM_DATA_FIELD ];then
+        break
+      fi
+      
+    done
+  
+  update_prev_data
+} 
+            
+show_data()
+{ 
+  cat $TMP_FILE | awk -F' ' '{printf $1" "}'
+  echo "" 
+}
+                                    
+#############################################################################################
+
+# Must set debug/error log file in the beginning
+set_error_log_file
+
+while getopts v:u:l:a:A:x:X:c:i:f:s:D:? c  2>/dev/null
+do
+  case $c in
+    v) PROTO_VERSION=$OPTARG;;   #has default version 1
+    c) COMMUNITY=$OPTARG;;       
+
+    # SNNPv3 related arguments
+    l) SECURITY_LEVEL=$OPTARG;;
+    u) USERNAME=$OPTARG;;
+    a) AUTH_PROTOCOL=$OPTARG;;
+    A) AUTH_PARAMS=$OPTARG;;
+    x) ENCRY_PROTOCOL=$OPTARG;;
+    X) PRIV_PARAMS=$OPTARG;;
+
+    i) INTERVAL_SECS=$OPTARG;;        #has default 10 sec
+    f) MIB_INP_FILE=$OPTARG;;
+    s) SNMP_AGENT_SERVER=$OPTARG;; 
+
+    D) DEBUG_LEVEL=$OPTARG;;         #has default debug_level 0
+    ?) Usage "Invalid arguments";;
+    *) Usage "Invalid arguments";;
+  esac
+done
+
+debug_log "SNMP Monitor started."
+
+# Checking whether input file is present or not
+if [ "X$MIB_INP_FILE" = "X" ]; then
+  echo "Mandatory argument -f <input file> is missing"
+  Usage "Mandatory argument -f <input file> is missing"
+fi
+if [ ! -f $MIB_INP_FILE ];then
+  echo "Input file $MIB_INP_FILE is not present"
+  Usage "Input file $MIB_INP_FILE is not present"
+  exit -1
+fi
+
+# Validation of command line arguments entered by the user and Setting SNMP_CMD depending on mibs.
+validate_and_set_snmp_cmd
+
+# Save values of input file into array
+init_mib_info
+
+#Save intial Data
+init_value
+
+lib_sleep $INTERVAL_SECS                 #Because first sample comes after freq 
+while true
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then 
+      exit 0
+    fi
+ 
+    # Calculating difference(if applicable) & applying formula on the data value 
+    get_data
+ 
+    # To display final output i.e. both the values : * obtained after executing the formula on diff.
+    #                                                * obtained after executing the formula on cur_data.
+    show_data
+    rm -f $TMP_FILE $SNMP_TMP_FILE
+    lib_sleep $INTERVAL_SECS 
+  done
+
+exit 0       

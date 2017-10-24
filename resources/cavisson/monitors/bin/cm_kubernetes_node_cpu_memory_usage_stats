@@ -1,0 +1,139 @@
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+INTERVAL_SECS=$MON_FREQUENCY
+VECTOR_FLAG="0"
+SAMPLE_NUMBER=0
+E_O_NUM=0
+
+#if [ -f /etc/lsb-release ]; then
+#  version=`cat /etc/lsb-release | grep DISTRIB_RELEASE | awk -F'=' '{print $2}' | cut -d'.' -f 1`
+#fi
+convert_Gi_to_Mi()
+{
+  echo $memory_bytes | grep "Gi" >/dev/null 2>&1
+  if [ $? -eq 0 ];then
+    memory_bytes=`echo $memory_bytes | tr -d 'Gi'`
+    memory_display_bytes=`expr $memory_bytes * 1000`
+  else
+    memory_bytes=`echo $memory_bytes | tr -d 'Mi'`
+    memory_display_bytes=`echo $memory_bytes`
+  fi
+  
+}
+
+declare list
+declare -A node_index
+count=0
+cluster_name="gke-cluster01"
+zone_name="us-central1-b"
+project_name="kohls-mobile-hle"
+show_data()
+{
+  gcloud container clusters get-credentials ${cluster_name} --zone ${zone_name} --project ${project_name} 2>/dev/null
+  list=(`${kubectl_base_file_path} top nodes | grep -v NAME `)
+  for((i=0;i<${#list[@]};i++))
+  do
+    vector_name=`echo ${list[$i]}`
+    if [ "X$vector_prefix" = "Xnoprefix" -o "X$vector_prefix" = "X" ]; then
+      vector_display_name=`echo ${list[$i]}`
+    else
+      vector_display_name="${vector_prefix}_`echo ${list[$i]}`"
+    fi
+    if [ "X${node_index[$vector_name]}" = "X" ];then
+      node_index[${list[$i]}]=`echo $count`
+      count=`expr $count + 1`
+    fi
+    i=`expr $i + 1`
+    cpu_cores=`echo ${list[$i]}|tr -d 'm'`
+    i=`expr $i + 1`
+    cpu_pct=`echo ${list[$i]}|tr -d '%'`
+    i=`expr $i + 1`
+    memory_bytes=`echo ${list[$i]}`
+    convert_Gi_to_Mi
+    i=`expr $i + 1`
+    memory_pct=`echo ${list[$i]}|tr -d '%'`
+
+    echo "${node_index[$vector_name]}:$vector_display_name|$cpu_cores $cpu_pct $memory_display_bytes $memory_pct"
+  done
+}
+
+show_vectors()
+{
+  echo "Warning: No vectors." 
+}
+
+display_help_and_exit()
+{
+  echo "$1"
+  echo "Usage: cm_kubernetes_node_cpu_memory_usage_stats [-v <vector_prefix> ] or [-i <Interval>]"
+  echo "-v: option used to get vector list for Command. Prefix will added before these vector names"
+  echo "-i: used for interval (in seconds)"
+  echo "-c: used for cluster name"
+  echo "-z: used for zone name"
+  echo "-p: used for project name"
+  echo "-f: used for kubectl file path"
+  echo "-X: used for <vector prefix/noprefix>"
+  echo "-L: used for <header/data>"
+  exit -1
+}
+
+kubectl_base_file_path="/usr/lib/google-cloud-sdk/bin/kubectl"
+
+while getopts i:v:c:z:p:X:L:f:? arg
+do
+  case $arg in
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG
+       ;;
+    f) kubectl_base_file_path=$OPTARG
+       ;;
+    c) cluster_name=$OPTARG
+       ;;
+    z) zone_name=$OPTARG
+       ;;
+    p) project_name=$OPTARG
+       ;;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ]; then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    i) INTERVAL_SECS=$OPTARG
+       freq_option="1"
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from iostat command
+  show_vectors
+else #To get data on every specified interval
+  while :
+  do
+    show_data
+    sleep $INTERVAL_SECS
+  done
+fi
+
+exit 0

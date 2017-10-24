@@ -1,0 +1,24 @@
+#!/usr/bin/expect -f
+
+set PGMPATH [lindex $argv 0]
+set HOST [lindex $argv 1]
+set USERNAME [lindex $argv 2]
+set PASSWORD [lindex $argv 3]
+set PGMARGS [lrange $argv 4 100]
+
+spawn -noecho ssh -l $USERNAME $HOST $PGMPATH $PGMARGS
+
+set timeout 2 
+expect "Are you sure you want to continue connecting (yes/no)?" {
+send "yes\r" }
+
+#Set timeout less than interval so that if password does not come, we do not loose first sample
+set timeout 8 
+expect -nocase *password:* {
+send "$PASSWORD\r" }
+
+set timeout -1
+puts "Data Start Now:..."
+puts "Data Start Now:..."
+
+expect eof 

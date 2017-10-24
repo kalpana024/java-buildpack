@@ -1,0 +1,221 @@
+# Name    - cm_cassandra_infostats
+# Purpose - This is a custom monitor which parses output of nodetool info and outputs data
+# Option  - 'Run Once'
+# GDF     - cm_cassandra_infostats.gdf 
+# Keyword -
+#   CUSTOM_MONITOR 192.168.1.218 cm_cassandra_infostats.gdf INFOSTATS 2 cm_cassandra_infostats -i 10
+#
+#./bin/nodetool info 
+#Token            : -4777650034612347406
+#ID               : a0cded73-0d30-4a2e-a799-e881044d2e2d
+#Gossip active    : true
+#Thrift active    : true
+#Native Transport active: true
+#Load             : 46.55 KB   ---
+#Generation No    : 1376368519
+#Uptime (seconds) : 9121     ---
+#Heap Memory (MB) : 152.26 / 891.25  --- 
+#Data Center      : datacenter1
+#Rack             : rack1
+#Exceptions       : 0            ------------
+#Key Cache        : size 296 (bytes), capacity 46137344 (bytes), 8 hits, 12 requests, 0.667 recent hit rate, 14400 save period in seconds   -------
+#Row Cache        : size 0 (bytes), capacity 0 (bytes), 0 hits, 0 requests, NaN recent hit rate, 0 save period in seconds
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+INTERVAL_SECS=$MON_FREQUENCY
+DEBUG=0
+FLAG=0
+
+debug_log()
+{
+  if [ $DEBUG -eq 1 ];then
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+set_debug_log_file()
+{
+if [ "XX$CAV_MON_HOME" != "XX" ];then
+  DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_cassandra_infostats_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+else
+  DEBUG_LOG_FILE="/tmp/cm_cassandra_infostats_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+  debug_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+fi
+}
+
+convert_into_mb()
+{
+  UNIT=$1
+  VAL=$2
+  FLAG=$3
+     
+  if [ "X$UNIT" = "XKB" ]; then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      VAL=`echo " scale=2; $VAL * 0.000976562" | bc`
+    else 
+      VAL=`awk -v "var1=$VAL" 'BEGIN{printf "%.2f", (var1 * 0.000976562)}'`
+    fi
+  elif [ "X$UNIT" = "XGB" ]; then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      VAL=`echo " scale=2; $VAL * 1024" | bc`
+    else
+      VAL=`awk -v "var1=$VAL" 'BEGIN{printf "%.2f", (var1 * 1024)}'`
+    fi
+  elif [ "X$UNIT" = "Xbytes" ]; then
+    if [ $BC_AVAILABLE -eq 1 ];then
+      VAL=`echo " scale=2; $VAL * 0.000000954" | bc`
+    else
+      VAL=`awk -v "var1=$VAL" 'BEGIN{printf "%.2f", (var1 * 0.000000954)}'`
+    fi
+  fi
+  
+  if [ $FLAG = 1 ]; then
+    LOAD=$VAL  
+  elif [ $FLAG = 2 ]; then
+    KeyCache_size=$VAL  
+  elif [ $FLAG = 3 ]; then
+    KeyCache_capacity=$VAL  
+  fi
+}
+
+run_cmd_and_show_data()
+{
+  #TODO: currently running command on every interval, but need to run this in background.
+
+  while true
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+
+    #Load             : 46.55 KB
+    #Generation No    : 1376368519
+    #Uptime (seconds) : 18111
+    #Heap Memory (MB) : 86.05 / 891.25
+    #Data Center      : datacenter1
+    #Rack             : rack1
+    #Exceptions       : 0
+    #Key Cache        : size 296 (bytes), capacity 46137344 (bytes), 12 hits, 16 requests, NaN recent hit rate, 14400 save period in seconds
+
+    #OUTPUT=`$CASSANDRA_PATH/bin/nodetool -h $HOST -p $PORT -u $USER -p $PASSWORD info | tail -9  | head -8 | awk -F':' '{printf ($2" ")}`
+    #OUTPUT=`$CASSANDRA_PATH/bin/nodetool info | tail -9  | head -8 | awk -F':' '{printf ($2" ")}'`
+    OUTPUT=(`$CASSANDRA_PATH/bin/nodetool info | tail -9  | head -8 | awk -F':' '{printf ($2" ")}'`)
+    if [ $? != 0 ];then
+      ns_log_event "Major" "Running command '$CASSANDRA_PATH/bin/nodetool info' failed."
+      return 1
+    fi
+
+    #46.55 KB  1376368519  18121  87.16 / 891.25  datacenter1  rack1  0  size 296 (bytes), capacity 46137344 (bytes), 12 hits, 16 requests, NaN recent hit rate, 14400 save period in seconds
+   
+    LOAD=${OUTPUT[0]}
+    UNIT=${OUTPUT[1]}
+    convert_into_mb $UNIT $LOAD 1
+
+    Uptime=${OUTPUT[3]}
+
+    HeapMemoryUsed=${OUTPUT[4]}
+    HeapMemoryTotal=${OUTPUT[6]}
+
+    Exeptions=${OUTPUT[9]}
+
+    KeyCache_size=${OUTPUT[11]}
+    UNIT=`echo ${OUTPUT[12]} | sed "s/(//g;s/)//g;s/,//g"`
+    convert_into_mb $UNIT $KeyCache_size 2
+
+    KeyCache_capacity=${OUTPUT[14]}
+    UNIT=`echo ${OUTPUT[15]} | sed "s/(//g;s/)//g;s/,//g"`
+    convert_into_mb $UNIT $KeyCache_capacity 3
+
+    KeyCache_hits=${OUTPUT[16]}
+    KeyCache_requests=${OUTPUT[18]}
+    KeyCache_hit_rate=`echo ${OUTPUT[20]} | sed "s/NaN/0/g"`
+
+    #LOAD=`echo $OUTPUT | awk -F' ' '{print $1}'`
+    #UNIT=`echo $OUTPUT | awk -F' ' '{print $2}' `
+    #convert_into_mb $UNIT $LOAD 1
+
+    #Uptime=`echo $OUTPUT | awk -F' ' '{print $4}'`
+
+    #HeapMemoryUsed=`echo $OUTPUT | awk -F' ' '{print $5}'`
+    #HeapMemoryTotal=`echo $OUTPUT | awk -F' ' '{print $7}'`
+
+    #Exeptions=`echo $OUTPUT | awk -F' ' '{print $10}'`
+
+    #KeyCache_size=`echo $OUTPUT | awk -F' ' '{print $12}'`
+    #UNIT=`echo $OUTPUT | awk -F' ' '{print $13}' | sed "s/(//g;s/)//g;s/,//g"`
+    #convert_into_mb $UNIT $KeyCache_size 2
+
+    #KeyCache_capacity=`echo $OUTPUT | awk -F' ' '{print $15}'`
+    #UNIT=`echo $OUTPUT | awk -F' ' '{print $16}' | sed "s/(//g;s/)//g;s/,//g"`
+    #convert_into_mb $UNIT $KeyCache_capacity 3
+
+    #KeyCache_hits=`echo $OUTPUT | awk -F' ' '{print $17}'`
+    #KeyCache_requests=`echo $OUTPUT | awk -F' ' '{print $19}'`
+    #KeyCache_hit_rate=`echo $OUTPUT | awk -F' ' '{print $21}' | sed "s/NaN/0/g"`
+
+    #echo "$LOAD $Uptime $HeapMemoryUsed $HeapMemoryTotal $Exeptions $KeyCache_size $KeyCache_capacity $KeyCache_hits $KeyCache_requests $KeyCache_hit_rate"
+    
+
+    #Java team added 2 more graphs which are not available here, hence just putting 0 for those
+    echo "$LOAD $HeapMemoryUsed $HeapMemoryTotal $Exeptions $KeyCache_size $KeyCache_capacity $KeyCache_hits $KeyCache_requests $KeyCache_hit_rate $Uptime 0 0" 
+    lib_sleep $INTERVAL_SECS
+  done
+}
+
+display_help_and_exit()
+{
+  echo "Usage: cm_cassandra_infostats [-i <Interval>] [-H <Hostname>] [-P <Port>] [-C <CASSANDRA PATH>] [-u <USERNAME>] [-p <PASSWORD>]"
+  echo "-i: used for interval (in seconds)"
+  echo "-H: used for Hostname"
+  echo "-P: used for Port"
+  echo "-C: used for cassandra path "
+  echo "-u: used for username"
+  echo "-p: used for password"
+  exit -1
+}
+
+set_debug_log_file
+
+while getopts i:H:P:C:u:p:D? arg
+do
+  case $arg in
+    i) INTERVAL_SECS=$OPTARG ;;
+    H) HOST=$OPTARG ;;
+    P) PORT=$OPTARG ;;
+    C) CASSANDRA_PATH=$OPTARG ;; 
+    u) USER=$OPTARG ;; 
+    p) PASSWORD=$OPTARG ;; 
+    D) DEBUG=1;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+debug_log "cm_cassandra_infostats monitor started."
+
+#Check installation directory
+if [ ! -d $CASSANDRA_PATH ];then
+  echo "Cassandra Installation Path $CASSANDRA_PATH does not exists."
+  exit 255
+fi
+
+run_cmd_and_show_data
+
+debug_log "cm_cassandra_infostats monitor end."
+
+exit 0

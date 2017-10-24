@@ -1,0 +1,137 @@
+# Name    : cm_nd_connection
+# Purpose : To get data from server list
+# Usage   :
+#   cm_nd_connection -f<server file list(full path)> -p<port_list> -i<interval>
+# For example:
+#   cm_nd_connection -f /home/netstorm/server.dat -p 23|8006|9008 -i 30(in minute)
+
+#Set CAV_MON_HOME to allow testing from command line
+
+
+PORT_LIST=""
+CM_ND_TR_PATH="${MON_NS_WDIR}/logs/TR${MON_TEST_RUN}/cm_nd_connection_$$.out"
+#CM_ND_TR_PATH=./out.$$
+DEBUG_LEVEL=0
+INTERVAL_SEC=900
+
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+#> $CM_ND_TR_PATH
+
+display_help_and_exit()
+{
+  echo "Error: $*"
+  echo "Usage: cm_nd_connection -f <server list> -p <port_list> [-i <Interval>]"
+  echo "Where:"
+  echo "  -f : To provide server list file. Use only absolute path."
+  echo "  -p : To provide port list seprated by pipe within double quote."
+  echo "       Eg: -p \"7891|7892\""
+  echo "  -i : To provide interval (in minutes)"
+  echo "  -D : To provide debug"
+  exit -1
+}
+
+set_error_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_nd_connection"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_nd_connection"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  else
+    DEBUG_LOG_FILE="/tmp/cm_nd_connection_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="/tmp/cm_nd_connection_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+set_error_log_file
+
+debug_log()
+{
+  if [ "X$DEBUG_LEVEL" = "X0" ]; then
+    return
+  else
+    #echo "Debug: $*"
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+read_server_file()
+{
+  while read server_ip
+  do
+    echo "`date +'%X %F'`|$server_ip| Netstat output.........................................." >>$CM_ND_TR_PATH
+    #nsu_server_admin -s $server_ip -i -c 'netstat -natp' |egrep "$NEW_PORT_LIST" >>$CM_ND_TR_PATH
+    #Neeraj - Remove p in netstat option as it gives warning message if cmon not running as root
+    nsu_server_admin -s $server_ip -i -c 'netstat -nat' |egrep "$NEW_PORT_LIST" >>$CM_ND_TR_PATH
+    #netstat -natp 2>/dev/null | grep $server_ip | egrep "$NEW_PORT_LIST" >>$CM_ND_TR_PATH 
+    echo "_______________________________________________________XXXX__________________________________" >>$CM_ND_TR_PATH
+    echo "" >>$CM_ND_TR_PATH
+  done <$SERVER_FILE
+}
+
+if [ $# -eq 0 ];then
+  display_help_and_exit "Argument is mandatory" 
+fi
+
+while getopts i:f:p:D arg
+do
+  case $arg in
+    i) INTERVAL_MINUTE=$OPTARG
+       echo $INTERVAL_MINUTE | grep '^[0-9]*$' 2>&1 >/dev/null 
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    f) SERVER_FILE=$OPTARG
+       ;;
+    p) PORT_LIST=$OPTARG;;
+
+    D) DEBUG_LEVEL=1 ;;         #has default debug_level 0
+     
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ ! -f $SERVER_FILE ]; then
+  display_help_and_exit "$SERVER_FILE does not exist."
+fi
+
+#if [ "X$PORT_LIST" = "X" ];then
+#   display_help_and_exit "$Port cant be given blank"
+#fi
+
+NEW_PORT_LIST=`echo $PORT_LIST |  sed 's/ //g'`
+
+if [ "X$INTERVAL_MINUTE" != "X" ];then
+  INTERVAL_SEC=`expr $INTERVAL_MINUTE \* 60`
+fi
+
+while true
+do
+  # Test is over. So exit with success status
+  isTestOver $MON_TEST_RUN
+  if [ $? = 1 ]; then
+    exit 0
+  fi
+
+  read_server_file 
+  
+  echo "Sleeping for $INTERVAL_SEC sec"
+  lib_sleep $INTERVAL_SEC
+ 
+done
+
+exit 0

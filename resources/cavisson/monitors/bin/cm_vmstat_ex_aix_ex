@@ -1,0 +1,102 @@
+# Name - cm_vmstat_ex_aix_ex (System statistics)
+# Purpose - This is a monitor to get data from vmstat for AIX machine
+# Option - 'Run Once'
+# GDF - cm_vmstat_ex_aix_ex.gdf 
+# Keyword -
+# STANDARD_MONITOR ServerName VectorName SystemStatsExtended <frequency in seconds>
+#
+# vmstat output
+#procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+# r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+# 1  0      0 2156936 215480 727932    0    0     7    18   44   72  1  1 99  0  0
+#
+# Custom Monitor Output -
+#2 0 0 2882864 2154352 220876 728512 0 0 0 0 128 294 0 0 100 0 0 0
+#0 0 0 2882872 2154360 220876 728512 0 0 0 0 178 286 0 0 99 0 1 0
+
+# Earlier, we were executing vmstat command in background;
+# and we needed to run script 'nsi_kill_child_of_monitors' to kill that command after test had stopped.
+#   
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+
+INTERVAL_SECS=$MON_FREQUENCY
+VECTOR_FLAG=""
+PID="$$"
+
+show_data()
+{
+  #Name:  CPU Queue (%)
+  #Value: Processes waiting for runtime / no. of cores on machine * 100
+  export NUMBER_OF_CORE_ON_MACHINE=`lsdev -Cc processor | wc -l`
+
+  while true
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+
+# r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+
+#Dervide metric
+#CPU utilization =  100 - Idle CPU
+#Idle Time -> 16th field
+#
+##Name:  CPU Queue (%)
+#Value: Processes waiting for runtime / NUMBER_OF_CORE_ON_MACHINE
+#Processes waiting for runtime -> 1th field
+  
+  #'1' is count; this command will print 1 sample.
+  #sample will be printed after $INTERVAL_SECS
+  #sample shows figures of $INTERVAL_SECS duration.
+  vmstat $INTERVAL_SECS 1 | tail -1 | awk '{printf $1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11" "$12" "$13" "$14" "$15" "$16" "$17" "(100 - $16)" "(($1 * 100)/ ENVIRON["NUMBER_OF_CORE_ON_MACHINE"])" "$18" "$19"\n"}'
+
+  done
+
+}
+
+
+
+display_help_and_exit()
+{
+  echo "Error: Incorrect Usage!"
+  echo "Usage:"
+  echo "cm_vmstat_ex_aix_ex [-i <Interval>]"
+  echo "-i: used for interval (in seconds). Default is 10 seconds"
+  exit -1
+}
+
+while getopts i:? arg
+do
+  case $arg in
+    i) INTERVAL_SECS=$OPTARG
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Invalid frequency argument value"
+         exit -1
+       fi
+       ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+show_data
+
+exit 0

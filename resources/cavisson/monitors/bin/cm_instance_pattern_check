@@ -1,0 +1,102 @@
+# Name - cm_instance_pattern_check
+# Purpose - This is a sample custom monitor to check if istance with provided pattern is running or not
+# Option - 'Run Once'
+# GDF - cm_instance_pattern_check.gdf 
+# Keyword -
+# CUSTOM_MONITOR 127.0.0.1 Vector_name cm_instance_pattern_check.gdf cm_instance_pattern_check -i 10000 -s 10.10.30.11 -p cassandra
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+INTERVAL_SECS=$MON_FREQUENCY
+VECTOR_FLAG="0"
+SAMPLE_NUMBER=0
+E_O_NUM=0
+
+#if [ -f /etc/lsb-release ]; then
+#  version=`cat /etc/lsb-release | grep DISTRIB_RELEASE | awk -F'=' '{print $2}' | cut -d'.' -f 1`
+#fi
+
+show_data()
+{
+
+ps -ef | grep -v grep |grep -v cm_instance_pattern_check | grep $instance_pattern >/dev/null 2>&1
+
+if [ $? -eq 0 ];then
+  echo "1";
+else
+  echo "0";
+fi
+
+}
+
+display_help_and_exit()
+{
+  echo "$1"
+  echo "Usage: cm_instance_pattern_check [-i <Interval>]"
+  echo "-i: used for interval (in seconds)"
+  echo "-p: used for instance_pattern"
+  exit -1
+}
+
+
+#if [ "X$#" = "X0" ];then
+# display_help_and_exit
+#  exit -1
+#fi
+
+while getopts i:p:s:? arg
+do
+  case $arg in
+    i) INTERVAL_SECS=$OPTARG
+       freq_option="1"
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    p) instance_pattern=$OPTARG
+       ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ "X$instance_pattern" == "X" ];then
+  echo "Mandatory arguments are missing"
+  display_help_and_exit
+fi
+
+if [ "X$MON_OPTION" = "X1" ]; then
+  RUN_OPTION=run_every_time
+else
+  RUN_OPTION=run_once
+fi
+
+
+if [ "X$RUN_OPTION" = "Xrun_every_time" ]; then
+  show_data
+  exit 0
+else
+  while :
+  do
+    show_data
+    sleep $INTERVAL_SECS
+  done
+fi
+
+
+exit 0

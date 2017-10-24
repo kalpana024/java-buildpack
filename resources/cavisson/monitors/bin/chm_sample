@@ -1,0 +1,74 @@
+#----------------------------------------------------------------------
+# Name            :  chm_sample
+# Author          :  Neeraj Jain
+# Purpose         :  Simple monitor for testing with some delay
+# Usage           :  chm_sample -s <sleep time> -r <pass | fail>
+# Where:          : -s to specify sleep time (default is 10 seconds)
+#                   -r to specify to pass or fail the monitor. Default is pass
+#Example -
+#        chm_sample -s 1 -r fail
+
+#----------------------------------------------------------------------
+
+
+#Set CAV_MON_HOME to allow testing from command line
+# Below we have replaced Tilde(~) with $HOME because ~ in not working in SunOS.
+# Also we have replaced == with = everywhere because == in not working in SunOS.
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit 255
+  fi
+fi
+
+export CAV_MON_HOME
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+Usage()
+{
+  ns_log_event "Major" "Incorrect arguments. Usage is $0 -s <sleep time> -r <pass | fail>"
+
+#  echo "Usage:"
+#  echo "$0 -s <sleep time> -r <pass | fail>"
+#  echo "For example:"
+#  echo "$0 -s 10 -r pass"
+
+  ns_check_mon_fail_and_exit
+}
+
+sleep_time=10
+result="pass"
+export sleep_time
+
+while getopts s:r:? arg
+do
+  case $arg in
+    s) sleep_time=$OPTARG
+       ;;
+    r) result=$OPTARG
+       ;;
+    *) Usage ;;
+    ?) Usage ;;
+  esac
+done
+
+ns_log_event "Warning" "chm_sample: Check monitor started"
+
+lib_sleep $sleep_time
+
+if [ $result = "pass" ]; then
+
+  ns_log_event "Info" "Check monitor passed"
+  ns_check_mon_pass_and_exit
+  exit 0
+else
+  ns_log_event "Info" "Check monitor failed"
+  ns_check_mon_fail_and_exit
+  exit 255
+fi
+

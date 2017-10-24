@@ -1,0 +1,222 @@
+##############################################################################################
+# Purpose : This shell will take care of providing process. Specilly for cmon
+#           If due to any reason cmon killed then this shell will start cmon again.
+#           In Khols env cmon killed surprisingly so need to recover cmon to avoid this type
+#           disaters.
+#
+# Design  : This shell will take pid from parent and check this pid is running for a given interval
+#           If pid is not running then it will satrt cmon and update own pid variable and
+#           again do monitor new pid. 
+#
+# Author  : Manish Kr. Mishra
+#
+# Date    : Sat Oct  5 17:14:17 IST 2013 
+##############################################################################################
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit 255
+  fi
+fi
+
+export CAV_MON_HOME
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+CHECK_CMON_LOGFILE="$CAV_MON_HOME/logs/nsu_check_cmon.log"
+
+OS_NAME=`uname`
+
+debug_log()
+{
+  if [ $DEBUG -eq 1 ];then
+    echo "`date +'%m/%d|%r'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+write_in_chk_cmon_logfile()
+{
+  STR=$1
+  WRITE_FLAG=0
+
+  if [ ! -f ${CHECK_CMON_LOGFILE} ]; then
+    touch ${CHECK_CMON_LOGFILE}
+    echo "`date +'%m/%d|%r'`|Chk mon log file (${CHECK_CMON_LOGFILE}) does not exists. Created chk mon log file ${CHECK_CMON_LOGFILE}"  >> $CHECK_CMON_LOGFILE
+  fi
+
+  #find file size
+  #if size > CHECK_CMON_LOGFILE then rollover
+  #else append with date and time
+  if [ `ls -l $CHECK_CMON_LOGFILE | awk -F" " '{print $5}'` -gt $CHK_CMON_LOG_SIZE ]; then
+    WRITE_FLAG=1
+  fi
+
+  if [ $WRITE_FLAG -eq 1 ]; then 
+    #rollover
+    mv ${CHECK_CMON_LOGFILE} ${CHECK_CMON_LOGFILE}.prev
+    #touch ${LOGFILE}    
+    echo "`date +'%m/%d|%r'`|$STR" >> $CHECK_CMON_LOGFILE
+  else
+    echo "`date +'%m/%d|%r'`|$STR" >> $CHECK_CMON_LOGFILE
+  fi
+}
+
+check_nc_available_and_set_cmd()
+{
+  type nc 1>/dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    write_in_chk_cmon_logfile "nc is not installed."
+    NC_AVAILABLE=0    #Shows nc is not installed
+    JAVA_CMD_FOR_PING="$JAVA_HOME/bin/java -cp $CAV_MON_HOME_PATH/bin:$CAV_MON_HOME_PATH/bin/CavMonAgent.jar: CheckCmon 127.0.0.1 $CMON_PORT"
+    write_in_chk_cmon_logfile "Java command: $JAVA_CMD_FOR_PING"
+  else
+    NC_AVAILABLE=1     #shows nc is installed
+    NC_CMD_FOR_PING="nc -v -w 5 127.0.0.1 $CMON_PORT"
+    write_in_chk_cmon_logfile "nc command: $NC_CMD_FOR_PING"
+  fi
+}
+
+nsu_check_cmon_killed_or_not()
+{
+  write_in_chk_cmon_logfile "Trying to start Cmon should stop shell, but it didn't. There may be some issue in starting cmon."
+  PID=`$PS_CMD_FOR_SEARCH | $LIB_PS_GREP_CMD "cmon" | $LIB_PS_GREP_CMD "CAV_MON_HOME=$CAV_MON_HOME_PATH" | $LIB_PS_GREP_CMD -v grep | awk -F" " '{print $2}'`
+  write_in_chk_cmon_logfile "New cmon process id $PID. Now Exiting........."
+  exit 255
+}
+
+
+#This method expects status of cmon (NotRunning/NotResponding) as argument. And starts or restarts cmon based on argument.
+start_or_restart_cmon()
+{
+  if [ "$1" = "NotRunning" ]; then
+    write_in_chk_cmon_logfile "CMON with pid $PID is not running. Hence Starting cmon..." 
+    nohup $CAV_MON_HOME_PATH/bin/cmon start >/dev/null 2>&1
+  elif [ "$1" = "NotResponding" ]; then
+    write_in_chk_cmon_logfile "CMON with pid $PID is not responding. Hence Restarting cmon..."
+    nohup $CAV_MON_HOME_PATH/bin/cmon restart >/dev/null 2>&1
+  fi 
+  nsu_check_cmon_killed_or_not
+}
+
+cmon_ping_check_for_nc()
+{
+  write_in_chk_cmon_logfile "In method : cmon_ping_check_for_nc"
+  write_in_chk_cmon_logfile "Running nc command $NC_CMD_FOR_PING"
+  NC_CMD_FOR_PING_OUTPUT=`echo -e "START_SESSION\nCLOSE_SESSION" | $NC_CMD_FOR_PING  2>&1`
+  if [ $? != 0 ];then  #if cmon is not running
+    write_in_chk_cmon_logfile "nc command output is: $NC_CMD_FOR_PING_OUTPUT"
+    start_or_restart_cmon "NotRunning" 
+  else 
+    echo $NC_CMD_FOR_PING_OUTPUT | grep "SESSION_STARTED"
+    if [ $? != 0 ];then   #if cmon is not responding
+      write_in_chk_cmon_logfile "nc command output is: $NC_CMD_FOR_PING_OUTPUT"
+      start_or_restart_cmon "NotResponding"
+    else
+      write_in_chk_cmon_logfile "CMON with pid $PID is responding."
+    fi
+  fi
+}
+
+cmon_ping_check_for_java()
+{
+  write_in_chk_cmon_logfile "In method : cmon_ping_check_for_java"
+  write_in_chk_cmon_logfile "Running Java command $JAVA_CMD_FOR_PING"
+  JAVA_CMD_FOR_PING_OUTPUT=`$JAVA_CMD_FOR_PING 2>&1`
+  RET_VAL=$?
+  write_in_chk_cmon_logfile "Java Program output is: $JAVA_CMD_FOR_PING_OUTPUT"
+  #if Java program returns -1; machines may consider it as -1 or 255.
+  if [ $RET_VAL -eq -1 -o $RET_VAL -eq 255 ];then       #if cmon is not responding
+    start_or_restart_cmon "NotResponding"
+  #if Java program returns -2; machines may consider it as -2 or 254.
+  elif [ $RET_VAL -eq -2 -o $RET_VAL -eq 254 ]; then    #if cmon is not running
+    start_or_restart_cmon "NotRunning"
+  elif [ $RET_VAL -eq 0 ]; then
+    write_in_chk_cmon_logfile "CMON with pid $PID is responding."
+  fi
+}
+
+check_cmon()
+{
+  cmon_ping_count=0
+
+  while true
+  do
+    #$PS_USING_PID $PID
+    $LIB_PS_CMD_FOR_DATA -p $PID > /dev/null
+    if [ $? != 0 ];then  #if cmon is not running
+      start_or_restart_cmon "NotRunning"
+    else 
+      debug_log "CMON with pid $PID is running"
+    fi
+
+    if [ $CMON_PING_INTERVAL -ne 0 ]; then
+      if [ $cmon_ping_count -eq $CMON_PING_INTERVAL ]; then
+        if [ $NC_AVAILABLE -eq 1 ]; then      #if nc is available
+          cmon_ping_check_for_nc
+        else                                  #if nc is not available
+          cmon_ping_check_for_java
+        fi
+        cmon_ping_count=0
+      fi
+      cmon_ping_count=`expr $cmon_ping_count + 1`
+    else 
+      debug_log "CMON_PING_INTERVAL is disabled."
+    fi    
+
+    lib_sleep $INTERVAL_SECS 
+
+  done
+}
+
+###################### FUNCTION CALLING #####################################
+DEBUG=0
+INTERVAL_SECS=10
+while getopts l:p:i:Ds:I:P:? arg
+do
+  case $arg in
+    l) CAV_MON_HOME_PATH="$OPTARG" ;; #Added this option just to differentiate which cmon is running by which user
+    p) PID="$OPTARG" ;;
+    i) INTERVAL_SECS="$OPTARG" ;;       #INTERVAL_SECS in secs
+    D) DEBUG=1 ;;               # Debug level
+    s) CHK_CMON_LOG_SIZE="$OPTARG" ;;               # check cmon log max size
+    I) CMON_PING_INTERVAL="$OPTARG" ;; # check cmon is responding interval
+    P) CMON_PORT="$OPTARG" ;; # cmon port. Default is 7891
+    ?) usage ;;
+  esac
+done
+
+DEBUG_LOG_FILE="$CAV_MON_HOME_PATH/logs/nsu_check_cmon.dlog"
+
+debug_log "Started monitor nsu_check_cmon."
+
+write_in_chk_cmon_logfile "CAV_MON_HOME_PATH = $CAV_MON_HOME_PATH, CMON_PID = $PID, INTERVAL_SECS = $INTERVAL_SECS, DEBUG = $DEBUG, CMON_PING_INTERVAL = $CMON_PING_INTERVAL, CHK_CMON_LOG_SIZE = $CHK_CMON_LOG_SIZE, CMON_PORT = $CMON_PORT"
+
+CMON_PING_INTERVAL=`expr $CMON_PING_INTERVAL \/ $INTERVAL_SECS`
+
+write_in_chk_cmon_logfile "Now CMON_PING_INTERVAL is $CMON_PING_INTERVAL(means $CMON_PING_INTERVAL times of nsu_check_cmon interval=$INTERVAL_SECS)"
+
+#Checking JAVA_HOME
+if [ -f $CAV_MON_HOME_PATH/sys/cmon.env ];then
+. $CAV_MON_HOME_PATH/sys/cmon.env
+fi
+if [ "XX$JAVA_HOME" = "XX" ];then
+  write_in_chk_cmon_logfile "JAVA_HOME is not set. Now Exiting."
+  exit 255
+fi
+
+write_in_chk_cmon_logfile "JAVA_HOME=$JAVA_HOME"
+
+#Checking if nc is available and setting nc or java command 
+check_nc_available_and_set_cmd
+
+#set_ps_cmd
+lib_set_ps_cmd
+check_cmon 
+
+exit 0

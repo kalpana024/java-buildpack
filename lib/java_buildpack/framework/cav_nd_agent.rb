@@ -56,10 +56,11 @@ module JavaBuildpack
       										TIER 		=> ENV['CAV_TIER'],
         									ND_AGENT_JAR 	=> '$PWD/.java-buildpack/cav_nd_agent/lib/ndagent-with-dep.jar',
         									ND_HOME 	=> '$PWD/.java-buildpack/cav_nd_agent',
-        									BCI_LOGS	=> ENV['CAV_LOGS'],
+										BCI_LOGS	=> ENV['CAV_LOGS'],
         									NDC_HOST	=> ENV['CAV_NDC_HOST'],
         									NDC_PORT	=> ENV['CAV_NDC_PORT'])
 
+        ENV['CAV_MON_HOME'] = '$PWD/.java-buildpack/cavisson/monitors'
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
 
         #application_name java_opts, credentials
@@ -71,7 +72,6 @@ module JavaBuildpack
         #port java_opts, credentials
         #ssl_enabled java_opts, credentials
       end
-
       private
 
       TIER = 'tier'.freeze

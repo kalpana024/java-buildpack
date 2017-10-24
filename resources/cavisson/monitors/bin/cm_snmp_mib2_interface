@@ -1,0 +1,227 @@
+
+################################################################################################
+# Name  : cm_mib2 
+# Usage : 
+# Purpose: This shell outputs interface counters from MIB2 for give interface every interval
+# Output : 
+#          
+# Initial version : 
+# Modification    : 
+# Author Name     : 
+
+#[root@netstormfc9_74 custom]# snmpwalk -Os -Ot  -c public -v 1 127.0.0.1 iso.org.dod.internet.mgmt.mib-2.interfaces.ifTable.1.ifDescr
+#ifDescr.1 = STRING: lo
+#ifDescr.2 = STRING: eth1
+
+#[root@netstormfc9_74 custom]# snmpwalk -Os -Ot  -c public -v 1 127.0.0.1 iso.org.dod.internet.mgmt.mib-2.interfaces.ifTable | grep ".2 = "
+#ifIndex.2 = INTEGER: 2
+#ifDescr.2 = STRING: eth1
+#ifType.2 = INTEGER: ethernetCsmacd(6)
+#ifMtu.2 = INTEGER: 1500
+#ifSpeed.2 = Gauge32: 0
+#ifPhysAddress.2 = STRING: 0:30:48:33:7f:3e
+#ifAdminStatus.2 = INTEGER: up(1)
+#ifOperStatus.2 = INTEGER: down(2)
+#ifLastChange.2 = 0
+#ifInOctets.2 = Counter32: 0
+#ifInUcastPkts.2 = Counter32: 0
+#ifInNUcastPkts.2 = Counter32: 0
+#ifInDiscards.2 = Counter32: 0
+#ifInErrors.2 = Counter32: 0
+#ifInUnknownProtos.2 = Counter32: 0
+#ifOutOctets.2 = Counter32: 0
+#ifOutUcastPkts.2 = Counter32: 0
+#ifOutNUcastPkts.2 = Counter32: 0
+#ifOutDiscards.2 = Counter32: 0
+#ifOutErrors.2 = Counter32: 0
+#ifOutQLen.2 = Gauge32: 0
+#ifSpecific.2 = OID: zeroDotZero
+
+
+DEBUG=0
+INTERVAL=10
+SNMP_AGENT_SERVER=127.0.0.1
+COMMUNITY=public
+#-v 1 | 2c | 3
+PROTO_VERSION=1
+
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh 
+
+#trap 'rm -f $NETSTAT_FILE; exit -1' 1 2 3 4 5 13 15 
+
+
+chk_opt()
+{ 
+  if [ "X$DEVICE" = "X" ]; then
+    Usage "-d option is missing"
+  fi
+}
+
+Usage()
+{ 
+  error_log "$*"
+  error_log "Usage: cm_mib2_interface -d <device e.g. eth0> [ -i <interval in secs (default 10)> -s <server name (default 127.0.0.1)> -c <community (default public)> -v <version 1 or 2c(default 1)> -D ]"
+  exit -1
+}
+
+#snmpget -Os -Ot -c public -v 1 127.0.0.1 iso.org.dod.internet.mgmt.mib-2.system.sysUpTime.0 iso.org.dod.internet.mgmt.mib-2.system.sysDescr.0
+#sysUpTimeInstance = 177873
+#sysDescr.0 = STRING: Linux netstormfc9_74 2.6.25-14.cav3_2GB.fc9.i686 #1 SMP Fri Jul 9 16:04:40 PDT 2010 i686
+# X=`cat /tmp/x | awk -F'=' '{printf $2}'`
+#[root@netstormfc9_74 bin]# echo $X
+#100 200
+
+CMD_ERROR_LOG=/tmp/snmp_cmd.err.$$
+CMD_OUTPUT_LOG=/tmp/snmp_cmd.out.$$
+
+remove_cmd_out_file()
+{
+  rm -f $CMD_ERROR_LOG $CMD_OUTPUT_LOG
+}
+
+run_cmd()
+{
+
+  #SNMP_DATA_ALL=`$SNMP_CMD $SNMP_MIBS 1>$CMD_OUTPUT_LOG 2>$CMD_ERROR_LOG`
+  $SNMP_CMD 1>$CMD_OUTPUT_LOG 2>$CMD_ERROR_LOG
+  if [ $? != 0 ];then
+    error_log "Error in the execution of the command '$SNMP_CMD' - `cat $CMD_ERROR_LOG`"
+    remove_cmd_out_file
+    exit 1
+  fi
+}
+
+set_snmp_cmd()
+{
+  SNMP_CMD="snmpwalk -Os -Ot -OQ -c $COMMUNITY -v $PROTO_VERSION $SNMP_AGENT_SERVER iso.org.dod.internet.mgmt.mib-2.interfaces.ifTable.1.ifDescr"
+
+  run_cmd
+
+#[root@netstormfc9_74 custom]# snmpwalk -Os -Ot -OQ -c public -v 1 127.0.0.1 iso.org.dod.internet.mgmt.mib-2.interfaces.ifTable.1.ifDescr |grep -w eth0
+#ifDescr.4 = eth0
+
+  DEVICE_Descr=`cat $CMD_OUTPUT_LOG | grep -w $DEVICE`
+  remove_cmd_out_file
+
+  if [ "X$DEVICE_Descr" = "X" ]; then
+    error_log "Invalid device name $DEVICE"
+    exit -1
+  fi
+
+  debug_log "DEVICE_Descr is $DEVICE_Descr"
+
+  DEVICE_INDEX=`echo $DEVICE_Descr | cut -d'.' -f2 | cut -d ' ' -f1`
+  if [ "X$DEVICE_INDEX" = "X" ]; then
+    error_log "Invalid device name $DEVICE"
+    exit -1
+  fi
+  debug_log "DEVICE_INDEX is $DEVICE_INDEX"
+
+  SNMP_CMD="snmpwalk -Os -Ot -OQ -Oe -c $COMMUNITY -v $PROTO_VERSION $SNMP_AGENT_SERVER iso.org.dod.internet.mgmt.mib-2.interfaces.ifTable.1"
+
+}
+
+get_data()
+{
+  run_cmd
+
+  SNMP_DATA=`cat $CMD_OUTPUT_LOG | grep "\.$DEVICE_INDEX = " | awk -F'=' '{printf $2}'`
+
+  remove_cmd_out_file
+}
+
+show_output()
+{
+
+  #ifIndex.4 = 4 ifDescr.4 = eth0 ifType.4 = ethernetCsmacd ifMtu.4 = 1500 ifSpeed.4 = 100000000 ifPhysAddress.4 = 0:40:f4:f0:23:52 ifAdminStatus.4 = up ifOperStatus.4 = up ifLastChange.4 = 0 ifInOctets.4 = 926355213 ifInUcastPkts.4 = 111922870 ifInNUcastPkts.4 = 0 ifInDiscards.4 = 0 ifInErrors.4 = 0 ifInUnknownProtos.4 = 0 ifOutOctets.4 = 789418776 ifOutUcastPkts.4 = 1252253256 ifOutNUcastPkts.4 = 0 ifOutDiscards.4 = 0 ifOutErrors.4 = 0 ifOutQLen.4 = 0 ifSpecific.4 = zeroDotZero
+
+  #4 eth0 ethernetCsmacd 1500 100000000 0:40:f4:f0:23:52 1 1 0 925529297 111915370 0 0 0 0 787871944 1252238573 0 0 0 0 zeroDotZero
+  
+  echo $SNMP_DATA | awk '{printf $4" "$5" "$7" "$8" "$10" "$11" "$12" "$13" "$14" "$15" "$16" "$17" "$18" "$19" "$20" "$21"\n"}'
+}
+
+error_log()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+} 
+
+debug_log()
+{   
+    if [ "X$DEBUG" = "X0" ]; then
+      return
+    else
+      echo "Debug: $*"
+      echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+    fi
+} 
+
+set_error_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_mib2_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_mib2_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  else
+    DEBUG_LOG_FILE="/tmp/cm_mib2_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="/tmp/cm_mib2_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+#############################################################################################
+
+set_error_log_file
+
+while getopts i:d:s:c:v:D? c  2>/dev/null
+do
+  case $c in
+    i) INTERVAL=$OPTARG;;    #has default 10 sec
+    d) DEVICE=$OPTARG;;
+    s) SNMP_AGENT_SERVER=$OPTARG;;
+    c) COMMUNITY=$OPTARG;;
+    v) PROTO_VERSION=$OPTARG;;
+    D) DEBUG=1;;
+    ?) Usage "Invalid arguments";;
+    *) Usage "Invalid arguments";;
+  esac
+done
+
+debug_log "SNMP Monitor started."
+
+#checking program arguments
+chk_opt
+
+
+# Setting SNMP_CMD depending on mibs
+set_snmp_cmd
+
+#Must set debug/error log file in the beginning
+
+  lib_sleep $INTERVAL                 #Because first sample comes after freq given if not given default 10 second
+  while true;
+  do
+# This check is for SUN OS, Because in SUN OS `date +%s` command is not supported so we take default value of time stamp TIME_STAMP=0. We will fix it later.
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then 
+      exit 0
+    fi
+
+    get_data
+    show_output
+    
+    lib_sleep $INTERVAL 
+  done

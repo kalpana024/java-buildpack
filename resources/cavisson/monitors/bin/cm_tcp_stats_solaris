@@ -1,0 +1,265 @@
+
+###############################################################################################
+#output:
+#tcpActiveOpens      =7629045    tcpPassiveOpens     =3588599
+
+#tcpAttemptFails     =5251991    tcpEstabResets      =429312
+
+#tcpCurrEstab        =   615     tcpOutSegs          =2298364084
+
+#tcpOutDataSegs      =3030602711 tcpOutDataBytes     =347120703
+
+#tcpRetransSegs      =132993     tcpRetransBytes     =10519552
+
+#tcpOutAck           =322837541  tcpOutAckDelayed    =33041017
+
+#tcpOutUrg           =    29     tcpOutWinUpdate     =    10
+
+#tcpOutWinProbe      =  8408     tcpOutControl       =24808041
+
+#tcpOutRsts          =7974883    tcpOutFastRetrans   =     2
+
+#tcpInSegs           =1493438061
+
+#tcpInAckSegs        =1730076816 tcpInAckBytes       =3895059540
+
+#tcpInDupAck         =3058092    tcpInAckUnsent      =     0
+
+#tcpInInorderSegs    =991807867  tcpInInorderBytes   =1800155991
+
+#tcpInUnorderSegs    =   414     tcpInUnorderBytes   =427452
+
+#tcpInDupSegs        =  1051     tcpInDupBytes       =130558
+
+#tcpInPartDupSegs    =     5     tcpInPartDupBytes   =  3382
+
+#tcpInPastWinSegs    =     1     tcpInPastWinBytes   =1643449977
+
+#tcpInWinProbe       =     0     tcpInWinUpdate      =  6864
+
+#tcpInClosed         =2161477    tcpRttNoUpdate      =15966560
+
+#tcpRttUpdate        =1711232734 tcpTimRetrans       = 35715
+
+#tcpTimRetransDrop   =    29     tcpTimKeepalive     =  9069
+
+#tcpTimKeepaliveProbe=  1192     tcpTimKeepaliveDrop =   155
+
+#tcpListenDrop       =     0     tcpListenDropQ0     =     0
+
+#tcpHalfOpenDrop     =     0     tcpOutSackRetrans   =  5127
+
+###############################################################################################
+#Here we are assuming that all the values are cumulative 
+#ex. init value = 14235
+#    cur value  = 323438874    which is greater then init value
+#    now difference will be calculated as: cur value - init value
+#Output Format:
+
+#tcpActiveOpens tcpPassiveOpens tcpAttemptFails tcpEstabResets tcpCurrEstab tcpOutSegs tcpOutDataSegs tcpOutDataBytes tcpRetransSegs tcpRetransBytes tcpOutAck tcpOutAckDelayed tcpOutUrg tcpOutWinUpdate tcpOutWinProbe tcpOutControl tcpOutRsts tcpOutFastRetrans tcpInSegs tcpInAckSegs tcpInAckBytes tcpInDupAck tcpInAckUnsent tcpInInorderSegs tcpInInorderBytes tcpInUnorderSegs tcpInUnorderBytes tcpInDupSegs tcpInDupBytes tcpInPartDupSegs tcpInPartDupBytes tcpInPastWinSegs tcpInPastWinBytes tcpInWinProbe tcpInWinUpdate tcpInClosed tcpRttNoUpdate tcpRttUpdate tcpTimRetrans tcpTimRetransDrop tcpTimKeepalive tcpTimKeepaliveProbe tcpTimKeepaliveDrop tcpListenDrop tcpListenDropQ0 tcpHalfOpenDrop tcpOutSackRetrans
+
+###############################################################################################
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+INTERVAL_SECS=$MON_FREQUENCY
+
+tcpActiveOpens=0
+tcpPassiveOpens=1
+tcpAttemptFails=2
+tcpEstabResets=3
+tcpCurrEstab=4
+tcpOutSegs=5
+tcpOutDataSegs=6
+tcpOutDataBytes=7
+tcpRetransSegs=8
+tcpRetransBytes=9
+tcpOutAck=10
+tcpOutAckDelayed=11
+tcpOutUrg=12
+tcpOutWinUpdate=13
+tcpOutWinProbe=14
+tcpOutControl=15
+tcpOutRsts=16
+tcpOutFastRetrans=17
+tcpInSegs=18
+tcpInAckSegs=19
+tcpInAckBytes=20
+tcpInDupAck=21
+tcpInAckUnsent=22
+tcpInInorderSegs=23
+tcpInInorderBytes=24
+tcpInUnorderSegs=25
+tcpInUnorderBytes=26
+tcpInDupSegs=27
+tcpInDupBytes=28
+tcpInPartDupSegs=29
+tcpInPartDupBytes=30
+tcpInPastWinSegs=31
+tcpInPastWinBytes=32
+tcpInWinProbe=33
+tcpInWinUpdate=34
+tcpInClosed=35
+tcpRttNoUpdate=36
+tcpRttUpdate=37
+tcpTimRetrans=38
+tcpTimRetransDrop=39
+tcpTimKeepalive=40
+tcpTimKeepaliveProbe=41
+tcpTimKeepaliveDrop=42
+tcpListenDrop=43
+tcpListenDropQ0=44
+tcpHalfOpenDrop=45
+tcpOutSackRetrans=46
+
+##############################################################################################
+Usage()
+{
+   echo "$0 [ -i <time in millisecs> ] [ -r (to display data per sec) ]"
+   exit 1
+}
+##############################################################################################
+
+#TMP_FILE="/tmp/tmp_file.$$"
+FILE_NAME="/home/netstorm/work/nitin/file2.txt"
+#call only at init time
+init_netstat_data()
+{
+   VALUE=0
+   Index=0
+   COUNT=0
+   i=0
+   #seq command is not running on SunSolaris machine so we are using while loop
+   #for i in `seq 0 46`
+   while [ $i -eq 46 ]
+   do 
+   Data_ARRAY[$i]=0
+   RELATIVE_DATA[COUNT]=0
+   COUNT=`expr $COUNT + 1`
+   i=`expr $i + 1`
+   done
+
+   #DATA=`cat $FILE_NAME | egrep -v "tcpRtoAlgorithm|tcpRtoMax" | tr -s " " | awk -F'=' '{printf $1" "$2" "$3}'`
+   DATA=`netstat -s -P tcp | egrep -v "tcpRtoAlgorithm|tcpRtoMax" | tr -s " " | awk -F'=' '{printf $1" "$2" "$3}'`
+#   echo "DATA: $DATA"
+
+   for i in `echo $DATA`
+   do
+      if [ $VALUE = 0 ];then
+        VAL=`eval echo \\$$i` 
+        #echo VAL=$VAL
+        if [ "X$VAL" = "X" ];then
+          continue
+        fi
+        Index=$i 
+        VALUE=1
+        continue
+      fi
+      DATA_ARRAY[Index]=$i
+      VALUE=0
+   done
+   #echo ${RELATIVE_DATA[@]}
+   #echo "All data: ${DATA_ARRAY[@]}"
+   #echo "COUNT=$COUNT "
+   
+}
+######################################################################################
+
+#called at every interval to get relative data w.r.t data calculated by init_netstat_data
+show_relative_netstat_data()
+{
+   VAL=""
+   CUR_VALUE=0
+   CUR_Index=0
+   #CUR_COUNT=0
+   #CUR_DATA=`cat $FILE_NAME | egrep -v "tcpRtoAlgorithm|tcpRtoMax" | tr -s " " | awk -F'=' '{printf $1" "$2" "$3}'`
+   CUR_DATA=`netstat -s -P tcp | egrep -v "tcpRtoAlgorithm|tcpRtoMax" | tr -s " " | awk -F'=' '{printf $1" "$2" "$3}'`
+   #echo "CUR_DATA: $CUR_DATA"
+   data_Index=0
+
+  
+  for i in `echo $CUR_DATA`
+  do
+    if [ $CUR_VALUE = 0 ];then
+      VAL=`eval echo \\$$i` 
+      #echo VAL=$val
+      if [ "X$VAL" = "X" ];then
+        continue
+      fi
+      CUR_Index=$i 
+      CUR_VALUE=1
+      continue
+    fi
+    if [ $RATE = 0 ];then
+       RELATIVE_DATA[CUR_Index]=`get_relative_value $i ${DATA_ARRAY[CUR_Index]} $0 NA`
+    else
+      if [ "X$CUR_Index" = "XtcpCurrEstab" ];then
+        CUR_VALUE=0
+        continue
+      fi
+       seg_retransmit=`get_relative_value $i ${DATA_ARRAY[CUR_Index]} $0 NA`
+       if [ $BC_AVAILABALE -eq 1 ]; then
+         RELATIVE_DATA[data_Index]=`echo " scale=3; $seg_retransmit / $INTERVAL_SECS" | bc`
+       else
+         RELATIVE_DATA[data_Index]=`awk -v "var1=$seg_retransmit" -v "var2=$INTERVAL_SECS" 'BEGIN{printf "%.3f", (var1/var2)}'`
+       fi
+       DATA_ARRAY[data_Index]=$i
+    fi
+    data_Index=`expr $data_Index + 1`
+    #CUR_COUNT=`expr $CUR_COUNT + 1`
+    CUR_VALUE=0
+  done
+  echo "${RELATIVE_DATA[@]}"
+}
+
+convert_interval_into_secs()
+{
+  #changing into seconds
+  if [ "$INTERVAL_SECS" -lt 1000 ];then
+    INTERVAL_SECS=`expr $INTERVAL_SECS \* 1000`
+  fi
+
+  INTERVAL_SECS=`expr $INTERVAL_SECS / 1000`
+}
+
+########################################################################################
+RATE=0
+while getopts i:r? c
+do
+   case $c in
+      i) INTERVAL_SECS=$OPTARG ;;    #has default 10000 msec
+      r) RATE=1 ;;
+      ?) Usage ;;
+   esac
+done
+
+#Save initial data
+init_netstat_data
+
+#Calculate OS architecture in order to set value of MAX_UNSIGNED_LONG for 32 bits CPU architecture / 64 bits CPU architecture.
+get_os_arch_data_model
+
+while true;
+do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+
+   lib_sleep $INTERVAL_SECS
+   show_relative_netstat_data
+done
+
+exit 0

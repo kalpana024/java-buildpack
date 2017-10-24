@@ -1,0 +1,205 @@
+# Name    : nsi_get_java_instance
+
+
+#In solaris using command
+#/usr/ucb/ps -auxwww
+#USER       PID %CPU %MEM   SZ  RSS TT       S    START  TIME COMMAND
+#USER       PID %CPU %MEM   VSZ RSS TTY      STAT START   TIME COMMAND
+#(1)netstorm  (2)2071  (3)2.2  (4)0.3 (5)3820 (6)3000 (7)pts/3    (8)O (9)15:02:37  (10)0:01 (11)/usr/ucb/ps -auxwww
+#
+#(1)sesadmin (2)27557  (3)0.3  (4)5.852038643774464 (5)?        (6)O (7)22:07:52 (8)180:29 (9)/usr/jdk1.6.0_27/bin/sparcv9/java -Dprogram.name=run.sh -server -Xmx4096m -Xms4096m -XX:NewSize=1250m-XX:MaxNewSize=1250m -XX:PermSize=512m -XX:MaxPermSize=512m -XX:ParallelGCThreads=16 -XX:ReservedCodeCacheSize=128m -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:+CMSParallelRemarkEnabled -XX:LargePageSizeInBytes=256m -XX:ThreadStackSize=1024 -XX:+CMSClassUnloadingEnabled -XX:+CMSPermGenSweepingEnabled -XX:StackShadowPages=20 -XX:+UseTLAB -XX:+UseCompressedOops -XX:SurvivorRatio=8 -XX:MaxTenuringThreshold=15 -XX:TargetSurvivorRatio=90 -Dsun.rmi.dgc.client.gcInterval=600000 -Dsun.rmi.dgc.server.gcInterval=600000 -XX:+DisableExplicitGC -XX:+PrintTenuringDistribution -XX:+PrintGCDetails -XX:+PrintHeapAtGC -verbose:gc -Xloggc:/usr/local/ecomm/logs/loggc/l_dotcom16/l_dotcom16_02032013_220704.log -XX:+PrintGCTimeStamps -Dsun.net.inetaddr.ttl=600 -Djavax.net.ssl.keyStore=/usr/local/ecomm/jboss/jboss-eap-4.3/jboss-as/ATG-Data/localconfig/extconfigs/loyaltyclientKeyStore/loyaltyclientKeyStore.jks -Djavax.net.ssl.keyStorePassword=changeit -Dexample.rmi.agent.port=8633 -javaagent:/usr/local/ecomm/jboss/jboss-eap-4.3/jboss-as/lib/endorsed/rmiagent.jar -Djava.net.preferIPv4Stack=true -Djava.endorsed.dirs=/usr/local/ecomm/jboss/jboss-eap-4.3/jboss-as/lib/endorsed -classpath /usr/local/ecomm/jboss/jboss-eap-4.3/jboss-as/bin/run.jar:/usr/jdk1.6.0_27/lib/tools.jar org.jboss.Main -c l_dotcom16 -b 172.20.1.133 -Datg.allowRemoveAllItems=true -Datg.dynamo.server.name=l_dotcom16 -Datg.dynamo.data-dir=/usr/local/ecomm/jboss/jboss-eap-4.3/jboss-as/ATG-Data -Djboss.partition.name=l_dotcom16 -Djboss.partition.udpGroup=233.4.3.13 -Datg.dynamo.liveconfig=on
+
+#In Unix FC14 using command
+#ps -ef
+#UID        PID  PPID  C STIME TTY          TIME CMD
+#(1)root         (2)1     (3)0  (4)0 (5)Feb05 (6)?        (7)00:00:02 (8)/sbin/init
+#UID        PID  PPID  C STIME TTY          TIME CMD
+
+              
+OS_NAME=`uname`
+
+
+TMP="/tmp/"
+if [ -d /var/tmp/ ]; then
+  TMP="/var/tmp/"
+fi
+
+OUT_FILE="${TMP}nsi_get_java_instance.$$"
+TMP_OUT_FILE="${TMP}nsi_get_java_instance.$$.tmp"
+FILTER_CMON=0
+F_FILTER_CMON=0
+PATTERN_ARR[0]=""
+NUM_PATTERN=0
+
+declare PATTERN_ARR[] 2>/dev/null
+#On HP-UX the sz field of ps is the resident set size. Since HP-UX supports demand loading, an increase in the rss may just mean that more of the process has page faulted into core. Depending on what definition of "memory leak" we are using, you may be able to detect leaks by looking at the virtual set size. On HP-UX you can do this with:
+#UNIX95=1
+#export UNIX95
+#ps -o pid,comm,sz,vsz -e
+#Or if you're using a real shell, just:
+#UNIX95=1 ps -o pid,comm,sz,vsz -e
+#HP has a product called glance which is a much better tool for stuff like this. It can show you the RSS/VSS of each memory region of a process.
+
+get_ps_cmd()
+{
+  echo "Pid|Owner|StartTime|CPUTime|TDUsingPID|TDUsingJMX|UsingCmd|F1|F2|F3|Instance|Arguments|LogFileName"
+  PS_CMD="$PS_CMD_FOR_SEARCH | grep java | grep -v grep | grep -v nsi_get_java_instances"
+  if [ $FILTER_CMON = 1 ];then 
+    PS_CMD="$PS_CMD | grep -v "PKG=cmon" | grep -v "CAV_MON_HOME""
+  fi
+  if [ $NUM_PATTERN -gt 0 ]; then
+    PS_CMD="$PS_CMD ${PATTERN_ARR[@]}"
+  fi
+  #PS_CMD="cat /tmp/x"
+  #echo "$PS_CMD > $OUT_FILE 2>/dev/null"
+  `eval $PS_CMD > $OUT_FILE 2>/dev/null`
+  sed 's/^ *//g' $OUT_FILE > $TMP_OUT_FILE
+  sed 's/  */ /g' $TMP_OUT_FILE > $OUT_FILE
+  #cat $OUT_FILE
+  
+
+  while read LINE
+  do
+    ARG=`echo "$LINE" | cut -d ' ' -f 5- | tr '|' '_'`
+    echo "$ARG" | cut -d ' ' -f 1 | grep 'java' > /dev/null
+    if [ $? != 0 ]; then
+      continue 
+    fi
+   
+    PID=`echo "$LINE" | cut -d ' ' -f 1`
+    NUM_ARG=`echo "$ARG" | sed 's/[^ ]//g' | wc -c`
+  
+    INSTANCE="-"
+    LOG_FILE="-" 
+    for i in {0..1000}
+    do
+      j=`expr $i + 1`
+      FIELD_VALUE=`echo $ARG | cut -d ' ' -f $j`
+      if [ "X${FIELD_VALUE}" = "X" ]; then
+        break;
+      fi
+      echo "${FIELD_VALUE}" | grep "jboss.partition.name=" > /dev/null 2>&1
+      if [ $? = 0 ]; then 
+        INSTANCE=`echo ${FIELD_VALUE} | cut -d '=' -f 2`
+        break;
+      fi
+      echo "${FIELD_VALUE}" | grep "catalina.home=" > /dev/null 2>&1
+      if [ $? = 0 ]; then
+        INSTANCE=`echo ${FIELD_VALUE} | cut -d '/' -f 2`
+        LOG_FILE=`echo ${FIELD_VALUE} | cut -d '/' -f 2-`
+        # LOG_FILE is without / as we are cutting with deliminator /
+        LOG_FILE="/$LOG_FILE/logs/catalina.out"
+        break;
+      fi
+      echo "${FIELD_VALUE}" | grep "weblogic.Name" > /dev/null 2>&1
+      if [ $? = 0 ]; then
+        INSTANCE=`echo ${FIELD_VALUE} | cut -d '=' -f 2`
+      fi
+      echo "${FIELD_VALUE}" | grep "DPKG=" > /dev/null 2>&1
+      if [ $? = 0 ]; then
+        INSTANCE=`echo ${FIELD_VALUE} | cut -d '=' -f 2`
+      fi
+    done
+
+    if [ "X$OS_NAME" = "XSunOS" ]; then
+      PS_OUT=`ps -p $PID -o 'user stime time' | sed 's/  */ /g' | tail -1`
+      USER=`/usr/xpg4/bin/id -un`
+    elif [ "X$OS_NAME" = "XAIX" ]; then 
+      PS_OUT=`ps -p $PID -o 'uname starttime time' | sed 's/  */ /g' | tail -1`
+      USER=`id -un`
+    else 
+      PS_OUT=`ps -p $PID -o 'uname stime time' | sed 's/  */ /g' | tail -1`
+      USER=`id -un`
+    fi
+
+    OWNER=`echo $PS_OUT | cut -d ' ' -f 1`
+    if [ "X$OS_NAME" = "XAIX" ]; then 
+      STIME=`echo $PS_OUT | cut -d ' ' -f 2`
+      CTIME=`echo $PS_OUT | cut -d ' ' -f 3`
+      CUR_CHR=`echo $STIME | cut -c 1`
+      #if [[ ! -z $(echo $CUR_CHAR | sed 's/[0-9]//g') ]]; then
+      if ! echo $CUR_CHR| egrep '^[0-9]+$'; then
+        STIME=`echo $PS_OUT | cut -d ' ' -f 2,3`
+        CTIME=`echo $PS_OUT | cut -d ' ' -f 4`
+      fi
+    else
+      STIME=`echo $PS_OUT | cut -d ' ' -f 2`
+      CTIME=`echo $PS_OUT | cut -d ' ' -f 3`
+    fi
+
+    USINGPID="No"
+    USINGJMX="No"
+    USING_CMD="No"
+
+    if [ "X$USER" = "Xroot" -o "X$OWNER" = "X$USER" -o "X$CMON_SUDO_ACCESS" = "X1" ]; then
+      USINGPID="Yes"
+      #In order to issue diagnostic commands to a process on Linux or Solaris, you need to run jrcmd as the same user as the one running the Java process.
+      if [ -f $JAVA_HOME/bin/jrcmd -o -f $JAVA_HOME/bin/jstack ]; then 
+        # In case cmon is running as root, we can use cmd as take thread dump shell does su - owner
+        if [ "X$USER" = "Xroot" -o "X$OWNER" = "X$USER" ]; then
+          USING_CMD="Yes"
+        elif [ "X$CMON_SUDO_ACCESS" = "X1" ]; then
+          USING_CMD="YesUsingSudo"
+        fi
+      fi
+    fi
+    echo "$PID|$OWNER|$STIME|$CTIME|$USINGPID|$USINGJMX|$USING_CMD|NA|NA|NA|$INSTANCE|$ARG|$LOG_FILE"
+
+  done < $OUT_FILE
+    
+  rm -f $OUT_FILE $TMP_OUT_FILE
+}   
+    
+set_ps_cmd()
+{   
+#  OS_NAME=`uname`
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+      PS_CMD_FOR_SEARCH="/usr/ucb/ps -axwww"
+  elif [ "X$OS_NAME" = "XAIX" ]; then 
+    PS_CMD_FOR_SEARCH="ps axwww"
+  else #Linux,AIX,HP-UX
+    PS_CMD_FOR_SEARCH="ps -ax" # Do not use ps -lef as need pid at filed 2
+  fi
+}
+
+usage()
+{
+  echo
+  echo "$*"
+  echo
+  echo "USAGE:"
+  echo "====="
+  echo
+  echo "$0 --filter_cmon <0/1> --filter_pattern <Patten>"
+  echo
+  echo "Where"
+  echo "  --filter_cmon is use to filter the cavmon and ns monitors process. 0 for not filters and 1 for filters."
+  echo "  Default value is 1 and it is optional"
+  echo "  --filter_pattern is use to filter with this pattern. We can give more then one pattern. It is optional."
+  exit 1
+}
+
+while [ "$1" != "" ]; do
+  case $1 in
+    "--filter_cmon")
+      shift
+      if [ F_FILTER_CMON = 1 ]; then
+        usage "--filter_cmon gives more then once"
+      fi
+      F_FILTER_CMON=1
+      FILTER_CMON=$1;;
+    "--filter_pattern")
+      shift
+      PATTERN_ARR[$NUM_PATTERN]="| grep -v \"$1\""
+      NUM_PATTERN=`expr $NUM_PATTERN + 1`;;
+    --*) usage "Invalid option $1";;
+    *) usage ;;
+  esac
+  shift
+done
+
+set_ps_cmd
+get_ps_cmd
+
+
+exit 0

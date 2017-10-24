@@ -1,0 +1,164 @@
+##########################
+# Name  : cm_glassfish_jdbc_pool
+# Usage :
+# Output :
+##########################
+DEBUG_LEVEL=0
+PID="$$"
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+
+INTERVAL_SECS=$MON_FREQUENCY
+
+JDBC_POOL_OUT_FILE=/tmp/jdbc_pool.out
+
+set_error_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_glassfish_jdbc_pool_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_glassfish_jdbc_pool_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  else
+    DEBUG_LOG_FILE="/tmp/cm_glassfish_jdbc_pool_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="/tmp/cm_glassfish_jdbc_pool_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+set_error_log_file
+
+debug_log()
+{
+  if [ "X$DEBUG_LEVEL" = "X0" ]; then
+    return
+  else
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+error_log()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+}
+
+error_log_and_exit()
+{
+  error_log "$*"
+  exit -1
+}
+
+Usage()
+{
+  error_log "$*"
+
+  error_log "Usage: cm_glassfish_jdbc_pool --cmd_path <cnd path> --user <UserName> --passwordfile <password file> --port <port> --type <type> --filter <filter> --interval <interval in sec(default 10 sec)>"
+
+  exit -1
+}
+
+chk_args_of_option()
+{
+  if [ "X$2" == "X" ];then
+    echo "Option $1 required a value."
+    Usage
+    exit -1
+  fi
+}
+
+get_and_show_data()
+{
+  debug_log "get_and_show_data() called"
+  #NOTE: Known issue
+  #running asadmin in background and not killing this process after monitor stops.
+  #server control is not available hence not handling this rght nw
+
+  #nsu_server_admin -s AppServer1 -c '/sharedvol-review/marketlive5/libraries/b2c/glassfish-v2.1-b60e/bin/asadmin monitor --user admin --passwordfile /tmp/passwd --port 4802 --type jdbcpool --filter h2oplussupport_pool server'
+  $CMD_PATH/asadmin monitor --user $USER --passwordfile $PASSWORD_FILE --port $PORT --interval $INTERVAL_SECS --type $TYPE --filter $FILTER > $JDBC_POOL_OUT_FILE &
+  nohup $UNIX_SHELL $CAV_MON_HOME/bin/nsi_kill_child_of_monitors -p $PID -i 10 -f $JDBC_POOL_OUT_FILE 2>/dev/null&
+  lib_sleep `expr $INTERVAL_SECS + 1`
+
+  #NumCnnFailedValidation  ----  8
+  #NumConnUsed --- 18
+  #NumConnFree -----11
+  #AverageConnWaitTime ---19
+  #NumConnCreated --- 6
+  #NumConnDestroyed --- 7
+  #NumConnAcquired --- 5 
+  #NumConnReleased --- 13 
+  #AverageConnWaitTime --- 1
+  #WaitTime   ConnReq                          ConnFree                             ConnUsed
+  #avg low hi cur acq crt des fai low hi cur   rej   rel    suc   to    low   hi    cur   wai
+  #1369693135985 1369658892002 1369727380558 1369727380558 126357 0   0   0   5   8  8   0   126357 0   0   0   3   0   0
+  while true
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then 
+      exit 0
+    fi
+
+    tail -1 $JDBC_POOL_OUT_FILE | awk '{printf $8" "$18" "$11" "$19" "$6" "$7" "$5" "$13" "$1"\n"}'
+    lib_sleep $INTERVAL_SECS 
+
+  done
+ exit 0       
+}
+
+if [ "X$1" == "X" ];then
+  Usage
+fi
+
+while [ "$1" != "" ];do
+  debug_log "ARGS=$1"
+  case $1 in
+    "--user")
+        shift
+	chk_args_of_option "--user" "$1"
+        USER=$1;;
+    "--passwordfile")
+        shift
+	chk_args_of_option "--passwordfile" "$1"
+        PASSWORD_FILE=$1;;
+    "--interval")
+        shift
+	chk_args_of_option "--interval" "$1"
+        INTERVAL_SECS=$1;;
+    "--type")
+        shift
+	chk_args_of_option "--type" "$1"
+        TYPE=$1;;
+    "--cmd_path")
+        shift
+	chk_args_of_option "--cmd_path" "$1"
+        CMD_PATH=$1;;
+    "--port")
+        shift
+	chk_args_of_option "--port" "$1"
+        PORT=$1;;
+    "--filter")
+        shift
+	chk_args_of_option "--filter" "$1"
+        FILTER=$1;;
+    --*) Usage "Invalid option";;
+    *) Usage;;
+  esac
+  shift
+done
+
+get_and_show_data
+
+exit 0       

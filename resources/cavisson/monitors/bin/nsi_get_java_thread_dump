@@ -1,0 +1,631 @@
+# Name    : nsi_get_java_thread_dump
+# Purpose : To take java thread dump
+#
+# Modification: 
+#
+#
+
+WAIT_TIME_FOR_THREAD_DUMP=300
+DEBUG=0
+ERR_FILE="/tmp/nsi_get_java_thread_dump.$$"
+
+PREV_LAST_THREAD_DUMP_START_LINE=" "
+LAST_THREAD_DUMP_START_LINE=" "
+LAST_THREAD_DUMP_START_LINE_NUM=0
+
+#export JAVA_HOME=/apps/java/jdk1.6.0_24
+
+#JAVA_PATH=`ps efh -p $PROCESS_ID | awk -F' ' '{print $5}'`
+#JRCMD="`dirname $JAVA_PATH`/jrcmd"
+#if [ "X$JRCMD" = "Xjava" -o "X$JRCMD" = "X" ];then
+#  JRCMD=`$JAVA_HOME`/bin/jrcmd
+#fi
+#JRSTACK="`dirname $JAVA_PATH`/jstack"
+#if [ "X$JSTACK" = "Xjava" -o "X$JSTACK" = "X" ];then
+#  JRSTACK=`$JAVA_HOME`/bin/jstack
+#fi
+#JRSTACK_FORCEFULLY="$JAVA_HOME/bin/jstack -F"
+
+OS_NAME=`uname`
+USERNAME=NA
+CHECK_TIME=2
+
+JSTKF_FLAG=0
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+export CAV_MON_HOME
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+              
+
+debug_log()
+{
+  if [ $DEBUG -eq 1 ];then
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+error_log()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+}
+
+error_log_and_exit()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+  exit -1
+}
+
+error_log_and_console_exit()
+{
+  echo "Error in getting thread dump due to following error:"
+  echo "$*"
+  exit -1
+  #error_log "$*"
+}
+
+error_log_and_console()
+{
+  echo "Error in getting thread dump due to following error:"
+  echo "$*"
+}
+
+set_debug_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/nsi_get_java_thread_dump_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/nsi_get_java_thread_dump_error.log"
+  else
+    DEBUG_LOG_FILE="/tmp/nsi_get_java_thread_dump_debug.log"
+    ERROR_LOG_FILE="/tmp/nsi_get_java_thread_dump_error.log"
+    debug_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+display_help_and_exit()
+{
+  error_log_and_console "Incorrect usage. $*. Usage: nsi_get_java_thread_dump -p <pid> [-u <username> ] -l <log file name> [ -w <wait time in secs> -D ]"
+  
+  echo "  -p: option to specify the pid of the process whose thread dump is to be taken."
+  echo "  -s: option to specify search pattern"
+  echo "  -l: option to specify the log file name where thread dump will be outputed by JVM. This is needed when thread dump us taken by sending signal to process. If jrcmd is used for JRockit, then it is not needed."
+  echo "  -u: option to specify username."
+  echo "  -w: option to specify wait time in secs for thread dump to be ready. Default is 5 minutes."
+  echo "  -D: option is to enable debug."
+  exit 1
+}
+
+# Thread dump will come in JVM stdout in following format:
+# 2013-02-03 22:58:17
+# Full thread dump Java HotSpot(TM) 64-Bit Server VM (20.2-b06 mixed mode):
+# 
+# "Thread-1472" daemon prio=3 tid=0x00000001072dc000 nid=0x9f3 runnable [0xfffffffe143fe000]
+#    java.lang.Thread.State: RUNNABLE
+#         at java.lang.Long.hashCode(Long.java:755)
+#         at java.util.HashMap.put(HashMap.java:372)
+#         at com.endeca.navigation.DimGroup.addNav(Unknown Source)
+#         at com.endeca.navigation.OptiBinaryInterp.FormatGrouping(Unknown Source)
+#         at com.endeca.navigation.OptiBinaryInterp.FormatGroupings(Unknown Source)
+#         at com.endeca.navigation.OptiBinaryInterp.ParseBinaryNode(Unknown Source)
+#         at com.endeca.navigation.OptiBackend.getNavigation(Unknown Source)
+#         at com.endeca.navigation.HttpENEConnection.query(Unknown Source)
+#         at walgreens.search.balancer.manager.SearchLoadManager$1.run(SearchLoadManager.java:126)
+# 
+# "AD Thread Pool-CSS50" daemon prio=3 tid=0x00000001076b9000 nid=0x9ea waiting on condition [0xfffffffe151fe000]
+#    java.lang.Thread.State: WAITING (parking)
+#         at sun.misc.Unsafe.park(Native Method)
+#         - parking to wait for  <0xfffffffe9fe8b570> (a java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject)
+#         at java.util.concurrent.locks.LockSupport.park(LockSupport.java:156)
+#         at java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject.await(AbstractQueuedSynchronizer.java:1987)
+#         at java.util.concurrent.DelayQueue.take(DelayQueue.java:160)
+#         at com.singularity.ee.util.rd.c(rd.java:523)
+#         at com.singularity.ee.util.rd.take(rd.java:516)
+#         at com.singularity.ee.util.ud.a(ud.java:487)
+#         at com.singularity.ee.util.rb.run(rb.java:691)
+#         at java.lang.Thread.run(Thread.java:662)
+# 
+# ...
+# ...
+#
+# "VM Periodic Task Thread" prio=3 tid=0x00000001030fc800 nid=0x30 waiting on condition
+#
+# JNI global references: 2315
+#
+# Heap
+# par new generation   total 1152000K, used 1025461K [0xfffffffe50010000, 0xfffffffe9e210000, 0xfffffffe9e210000)
+#  eden space 1024000K,  87% used [0xfffffffe50010000, 0xfffffffe86c7d790, 0xfffffffe8e810000)
+#  from space 128000K, 100% used [0xfffffffe8e810000, 0xfffffffe96510000, 0xfffffffe96510000)
+#  to   space 128000K,   0% used [0xfffffffe96510000, 0xfffffffe96510000, 0xfffffffe9e210000)
+# concurrent mark-sweep generation total 2914304K, used 610209K [0xfffffffe9e210000, 0xffffffff50010000, 0xffffffff50010000)
+# concurrent-mark-sweep perm gen total 524288K, used 232910K [0xffffffff50010000, 0xffffffff70010000, 0xffffffff70010000)
+thread_run_command_with_wait()
+{
+  LOC_RUN_CMD=$1
+  LOC_RUN_CMD_FORCEFULLY=$2
+  LOC_CMD_OUT_FILE=$3
+  LOC_WAIT_TIME=$4
+  LOC_CHECK_TIME=$5
+
+  debug_log "Running command $LOC_RUN_CMD. Output file = $LOC_CMD_OUT_FILE, Wait Time = $LOC_WAIT_TIME, Check Time = $LOC_CHECK_TIME, LOC_RUN_CMD_FORCEFULLY = $LOC_RUN_CMD_FORCEFULLY"
+
+  eval nohup $LOC_RUN_CMD 1>>$LOC_CMD_OUT_FILE 2>/dev/null &
+  #Save exit status
+  EXIT_STATUS=$?
+  #Get pid of the command
+  CMD_PID=$!
+  #sleep 1
+  #cat $LOC_CMD_OUT_FILE
+  #Note - nohup exit status is based on whether is was able to run the command or not. Command exit status is not returned
+  if [ $EXIT_STATUS != 0 ]; then
+      error_log_and_console "Error in running command $LOC_RUN_CMD. Exit status = $EXIT_STATUS"
+      cat $LOC_CMD_OUT_FILE
+      rm -f $LOC_CMD_OUT_FILE
+    exit $EXIT_STATUS
+  fi
+
+  LOC_TOTAL_TIME=0
+  debug_log "Command started OK. Going to wait for the command to complete with wait time of $LOC_WAIT_TIME seconds"
+
+  while [ $LOC_TOTAL_TIME -lt $LOC_WAIT_TIME ];
+  do
+    ps -p $CMD_PID >/dev/null 2>&1
+    if [ $? != 0 ]; then
+      #Wait is used to get the exit status of the command as nohup does not give this
+      wait $CMD_PID
+      EXIT_STATUS=$?
+      if [ $EXIT_STATUS != 0 ]; then
+        if [ $JSTKF_FLAG -eq 1 ]; then
+          error_log_and_console "Error in running command $LOC_RUN_CMD_FORCEFULLY. Exit status = $EXIT_STATUS"
+          cat $LOC_CMD_OUT_FILE
+          rm -f $LOC_CMD_OUT_FILE
+          exit $EXIT_STATUS
+        fi
+        #echo "Taking Thread dump forcefully using command: $LOC_RUN_CMD_FORCEFULLY"
+        echo $LOC_RUN_CMD | grep "jstack" >>/dev/null
+        if [ $? -eq 0 ]; then
+          debug_log "Running jstack forcefully. Command is $LOC_RUN_CMD_FORCEFULLY"
+          eval nohup $LOC_RUN_CMD_FORCEFULLY 1>>$LOC_CMD_OUT_FILE 2>/dev/null  &
+          #Save exit status
+  EXIT_STATUS=$?
+          #Get pid of the command
+          CMD_PID=$!
+          if [ $EXIT_STATUS != 0 ]; then
+            error_log_and_console "Error in running command $LOC_RUN_CMD_FORCEFULLY. Exit status = $EXIT_STATUS"
+            cat $LOC_CMD_OUT_FILE
+            rm -f $LOC_CMD_OUT_FILE
+            exit $EXIT_STATUS
+          else
+            JSTKF_FLAG=1
+            LOC_TOTAL_TIME=0
+            continue
+          fi
+        else
+          error_log_and_console "Error in running command $LOC_RUN_CMD. Exit status = $EXIT_STATUS"
+          cat $LOC_CMD_OUT_FILE
+          rm -f $LOC_CMD_OUT_FILE
+          exit $EXIT_STATUS
+        fi
+      fi
+      debug_log "Command is over with success status"
+      cat $LOC_CMD_OUT_FILE
+      rm -f $LOC_CMD_OUT_FILE
+      break
+    fi
+    LOC_TOTAL_TIME=`expr $LOC_TOTAL_TIME + 1`
+debug_log "Command is still running with PID $CMD_PID. Sleeping for $LOC_CHECK_TIME seconds. Total wait time so far is $LOC_TOTAL_TIME"
+    sleep $LOC_CHECK_TIME
+  done
+
+
+
+  if [ $LOC_TOTAL_TIME -ge $LOC_WAIT_TIME ]; then
+    #Killing hanging command
+    kill -9 $CMD_PID
+    error_log_and_console_exit "Error in getting output of command in maximum wait time of $LOC_WAIT_TIME seconds"
+    rm -f $LOC_CMD_OUT_FILE
+  fi
+
+  debug_log "Total time taken by command to execute = $LOC_TOTAL_TIME seconds."
+}
+
+give_me_the_start_thread_dump_line_num()
+{
+  debug_log "Checking thread dump"
+
+  if [ "X$OS_NAME" = "XAIX" ];then
+    LAST_THREAD_DUMP_START_LINE=`grep -in "Java dump written to" $THREAD_DUMP_LOG_FILE | tail -1`
+  else
+    #===== FULL THREAD DUMP =============== (JRocket)
+    # Full thread dump Java HotSpot(TM) 64-Bit Server VM (20.2-b06 mixed mode): (Sun)
+    LAST_THREAD_DUMP_START_LINE=`grep -in "Full thread dump" $THREAD_DUMP_LOG_FILE | tail -1`
+  fi
+
+  if [ "X$LAST_THREAD_DUMP_START_LINE" = "X" ]; then
+    error_log_and_console_exit "Thread dump not found in the file. File name is $THREAD_DUMP_LOG_FILE"
+  fi
+
+  #58:Full thread dump Java HotSpot(TM) 64-Bit Server VM (20.2-b06 mixed mode):
+  START_LINE_NUM=`echo $LAST_THREAD_DUMP_START_LINE | cut -f1 -d':'`
+  if [ $? != 0 ]; then
+    error_log_and_console_exit "Thread dump not found in the file. File name is $THREAD_DUMP_LOG_FILE"
+  fi
+
+  
+  #TODO: If new thread dump is not complete after wait time. May be due to disk space problem -> This issue is not handled because right now we do not have any way to           find out whether thread dump is complete or not.
+
+  # In case of Rocket, there is a end marker. So we can use this later
+  # ===== END OF THREAD DUMP ===============
+  #
+  #CASE: IF START_LINE_NUM = PREV_START_LINE_NUM after truncate is not hadled because this is a rare case.
+
+  if [ $START_LINE_NUM -gt $PREV_START_LINE_NUM ]; then 
+    debug_log "New thread dump found in the file. File name is $THREAD_DUMP_LOG_FILE" 
+  else
+    error_log_and_console_exit "New thread dump not found in the file. File name is $THREAD_DUMP_LOG_FILE" 
+  fi
+
+  LAST_LINE_NUM=`wc -l $THREAD_DUMP_LOG_FILE | awk '{print $1}'`
+
+  # Add 2 - one for Full thread dump line and one for time stamp
+  TOTAL_LINES=`expr $LAST_LINE_NUM - $START_LINE_NUM + 2`
+}
+
+VENDOR_NAME=""
+JAVA_VENDOR=""
+get_vendor_name()
+{
+  #JAVA_VENDOR_FILE="import java.util.Properties;
+  #   public class vendor{
+  #      public static void main(String args[]){
+  #          Properties prop = System.getProperties();
+  #          System.out.println (\"JVM Vendor : \" + prop.getProperty(\"java.vendor\") );
+  #           }
+  #         }
+  #         "
+  #  #JAVA_PATH=`ps efh -p $PROCESS_ID | awk -F' ' '{print $5}'`
+  #  JAVAC_PATH="`dirname $JAVA_PATH`/javac"
+  #  if [ "X$JAVAC_PATH" = "X./javac" ];then
+  #    JAVAC_PATH="javac"
+  #  fi
+  #  JAVA_FILE=vendor.java
+  #  CLASS_FILE=vendor
+  #  cd /tmp
+  #  echo $JAVA_VENDOR_FILE > /tmp/$JAVA_FILE
+  #  #echo $JAVA_VENDOR_FILE > $JAVA_FILE
+  #  $JAVAC_PATH $JAVA_FILE 
+  #  if [ $? != 0 ];then
+  #   error_log_and_console_exit "Error in compiling $JAVA_FILE file for getting vendor";
+  #  fi
+  #  VENDOR_NAME=`$JAVA_PATH -cp /tmp $CLASS_FILE`
+  #  if [ $? != 0 ];then
+  #    error_log_and_console_exit "Java command failed in getting vendor name";
+  #  fi
+
+  #  JAVA_VENDOR=`echo $VENDOR_NAME| cut -d ':' -f 2`
+    #rm $JAVA_FILE
+    #rm $CLASS_FILE.class
+    #cd - >/dev/null
+  #  cd - 
+  
+  if [ "$JAVA_PATH" != "X" ];then
+    JAVA_VERSION=`$JAVA_PATH -version 2>&1`
+  else
+    JAVA_VERSION=`java -version 2>&1`
+  fi
+
+  echo $JAVA_VERSION | grep -i "IBM" > /dev/null
+
+  if [ $? -eq 0 ];then
+   JAVA_VENDOR="IBM Corporation"
+  fi
+}
+
+take_thread_dump()
+{
+  PREV_START_LINE_NUM=0
+  debug_log "Checking if thread dump file is present or not. File name is $THREAD_DUMP_LOG_FILE"
+
+  if [ -f $THREAD_DUMP_LOG_FILE ]; then
+    if [ "X$OS_NAME" = "XAIX" ];then
+      PREV_LAST_THREAD_DUMP_START_LINE=`grep -n "Java dump written to" $THREAD_DUMP_LOG_FILE | tail -1` 
+    else
+      PREV_LAST_THREAD_DUMP_START_LINE=`grep -n "Full thread dump" $THREAD_DUMP_LOG_FILE | tail -1`
+    fi
+
+    PREV_START_LINE_NUM=`echo $PREV_LAST_THREAD_DUMP_START_LINE | cut -f1 -d':'`
+    if [ "X$PREV_START_LINE_NUM" = "X" ]; then
+      PREV_START_LINE_NUM=0
+    fi
+  fi
+
+  #For testing
+  #echo "before sleep"
+  #> $THREAD_DUMP_LOG_FILE
+  #sleep 50
+  #echo "aftr sleep"
+
+  debug_log "Sending signal 3 to pid $PROCESS_ID"
+  kill -3 $PROCESS_ID 2>>$ERR_FILE
+  if [ $? != 0 ]; then
+    error_log_and_console "Error in sending signal to process with PID $PROCESS_ID."
+    cat $ERR_FILE
+    rm -f $ERR_FILE
+    exit 1
+  fi
+
+
+  debug_log "Sleeping for $WAIT_TIME_FOR_THREAD_DUMP seconds"
+  lib_sleep $WAIT_TIME_FOR_THREAD_DUMP
+
+  give_me_the_start_thread_dump_line_num
+
+  echo "Thread dump captured as follows:"
+
+  if [ "X$OS_NAME" = "XAIX" ];then
+    #sed -n '8p' file.java | awk -F' ' '{printf $6}' 
+    #sed -n "${var}{p;q;}" file.java
+    file_path=`sed -n "${START_LINE_NUM}{p;q;}" $THREAD_DUMP_LOG_FILE | awk -F' ' '{printf $6}'`
+    cat $file_path
+  else
+    tail -$TOTAL_LINES $THREAD_DUMP_LOG_FILE
+  fi
+}
+
+#This will take dump using JRockit Cmd jrcmd.
+#Assumption is that application and cmon are using JRockit JVM
+take_thread_dump_using_jrcmd()
+{
+
+  debug_log "Getting thread dump using $JRCMD $PROCESS_ID print_threads"
+
+  #jrcmd does not supports forcefull option
+
+  #Run command to get thread dump. Output will come on stdout of this command
+  if [ $RUN_CMD_FROM_SU -eq 1 ];then
+    thread_run_command_with_wait "su - $OWNER -c \"$JRCMD $PROCESS_ID print_threads\"" "Forcefull not supported" "$ERR_FILE" "$WAIT_TIME_FOR_THREAD_DUMP" "$CHECK_TIME"
+  else
+    thread_run_command_with_wait "$JRCMD $PROCESS_ID print_threads" "Forcefull not supported" "$ERR_FILE" "$WAIT_TIME_FOR_THREAD_DUMP" "$CHECK_TIME"
+  fi 
+}
+
+take_thread_dump_using_jstack()
+{
+
+  debug_log "Getting thread dump using $JRSTACK -l $PROCESS_ID"
+
+  #Run command to get thread dump. Output will come on stdout of this command
+  if [ $RUN_CMD_FROM_SU -eq 1 ];then
+    thread_run_command_with_wait "su - $OWNER -c \"$JRSTACK -l $PROCESS_ID\"" "su - $OWNER -c \"$JRSTACK_FORCEFULLY -l $PROCESS_ID\"" "$ERR_FILE" "$WAIT_TIME_FOR_THREAD_DUMP" $CHECK_TIME
+  else
+    thread_run_command_with_wait "$JRSTACK -l $PROCESS_ID" "$JRSTACK_FORCEFULLY -l $PROCESS_ID" "$ERR_FILE" "$WAIT_TIME_FOR_THREAD_DUMP" $CHECK_TIME
+  fi
+
+#  if [ $? != 0 ]; then
+#    error_log_and_console "Error in running $JRSTACK -l $PROCESS_ID"
+#    exit 1
+#  fi
+
+}
+
+# Thread dump method for IBM
+take_ibm_thread_dump()
+{
+# File format will be like javacore.20150714.173105.8884.0001.txt. We are taking 0001 as sequence no
+debug_log "Getting thread dump using kill -3 -l $PROCESS_ID"
+
+# Get latest sequence no which is present before taking thread dump, this will help us to find that will contain our thread dump
+DUMP_SEQ=`ls -tr $LOG_DIR_PATH| grep javacore |grep $PROCESS_ID  |tail -1 |awk -F'.' '{print$5}'`
+if [ "xDUMP_SEQ" == "x" ]; then 
+  DUMP_SEQ=0
+fi
+
+#Take thread dump by sending SIGQUIT (3) to process
+kill -3 $PROCESS_ID 
+if [ $? != 0 ]; then
+    error_log_and_console "Error in sending signal to process with PID $PROCESS_ID."
+    cat $ERR_FILE
+    rm -f $ERR_FILE
+    exit 1
+fi
+
+# sleep for five seocnds because command will take some time to write thread dump in file
+lib_sleep 5
+
+# Get dump file name and sequence no
+DUMP_FILE_NAME=`ls -tr $LOG_DIR_PATH| grep javacore |grep $PROCESS_ID  |tail -1 `
+#Get sequence no of new file
+NEW_DUMP_SEQ=`echo $DUMP_FILE_NAME |awk -F'.' '{print$5}'`
+
+if [ $NEW_DUMP_SEQ -le $DUMP_SEQ ]; then 
+  error_log_and_console "Thread dump file is not created for PID $PROCESS_ID."
+  exit 1
+
+fi
+
+# Check in loop if END OF DUMP is wriiten in file or not, if written break the loop as dump is completely written 
+for (( i = 0; i <= $WAIT_TIME_FOR_THREAD_DUMP-5; i++ )) ; do
+  lib_sleep 1 
+  FOUND=`grep " END OF DUMP " $LOG_DIR_PATH/$DUMP_FILE_NAME`
+  if [ "x$FOUND" != "x" ]; then
+    debug_log "Got END OF DUMP in thread dump, dump completely written to file"
+    break  
+  fi 
+  debug_log "Not Found END OF DUMP in thread dump, dump is not completely written to file, waiting for dump to be completed"
+done
+
+if [ "x$FOUND" == "x" ]; then
+  debug_log " END OF DUMP is not found in dump, wait time for thread sump is over, so not waiting to for complete thread dump"
+fi 
+
+
+cat $LOG_DIR_PATH/$DUMP_FILE_NAME 
+rm  $LOG_DIR_PATH/$DUMP_FILE_NAME 
+}
+###########################################################################################################################################
+
+if [ $# -eq 0 ];then
+ display_help_and_exit "Mandatory arguments are missing"
+fi
+
+
+#Must set debug log file in the beginning
+set_debug_log_file
+
+
+#This method to check options if used more
+check_if_p_and_s_option()
+{
+  if [ "X$PFLAG" = "X1" -a "X$SFLAG" = "X1" ]; then
+    display_help_and_exit "nsi_get_java_thread_dump: -p can not be use with -s option."
+  fi
+}
+
+check_and_kill_prev_hanging_cmd()
+{
+  lib_kill_ps_tree_by_pattern "nsi_get_java_thread_dump" "nsi_get_java_thread_dump" "\"\-u $USERNAME\"" "\"\-p $PROCESS_ID\""
+}
+
+get_user_and_owner()
+{
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    PS_OUT=`ps -p $PROCESS_ID -o 'user stime time' | sed 's/  */ /g' | tail -1`
+    USER=`/usr/xpg4/bin/id -un`
+  elif [ "X$OS_NAME" = "XAIX" ]; then
+    PS_OUT=`ps -p $PROCESS_ID -o 'uname starttime time' | sed 's/  */ /g' | tail -1`
+    USER=`id -un`
+  else
+    PS_OUT=`ps -p $PROCESS_ID -o 'uname stime time' | sed 's/  */ /g' | tail -1`
+    USER=`id -un`
+  fi
+
+  OWNER=`echo $PS_OUT | cut -d ' ' -f 1`
+}
+
+run_cmd_frm_su_or_not()
+{
+  if [ "X$OWNER" != "X$USER" -a "X$USER" = "Xroot" ]; then
+    RUN_CMD_FROM_SU=1
+  fi
+}
+
+RUN_CMD_FROM_SU=0
+PFLAG=0
+FFLAG=0
+SEARCH_PATTERN_LIST=""
+#TODO; Add more options like cm_ps_data
+while getopts p:u:l:w:s:D? arg
+do
+  case $arg in
+    p) PFLAG=1;
+       PROCESS_ID="$OPTARG";;
+    s) SFLAG=1;
+       SEARCH_PATTERN="$OPTARG";
+       SEARCH_PATTERN_LIST="`echo $SEARCH_PATTERN_LIST` -s `echo $SEARCH_PATTERN`";;
+    u) USERNAME="$OPTARG";;
+    w) WAIT_TIME_FOR_THREAD_DUMP="$OPTARG";;  #Wait time in secs for thread dump to be ready
+    l) THREAD_DUMP_LOG_FILE="$OPTARG";;       #Log file where thread dump will be stored
+    D) DEBUG=1;;
+    ?) display_help_and_exit "Invalid argument passed" ;;
+  esac
+done
+
+
+check_if_p_and_s_option
+
+
+if [ "X$SFLAG" = "X1" ]; then
+{
+  PROCESS_ID=`get_ps_arg_value $SEARCH_PATTERN_LIST -o show-pid`
+  echo $PROCESS_ID | grep ' ' > /dev/null
+  ret=$?
+  if [ $ret = 0 ]; then
+    display_help_and_exit "Multiple process id for search pattern is not allowed"
+  fi      
+}
+fi
+
+if [ "X$PROCESS_ID" = "X" ]; then
+  display_help_and_exit "Mandatory argument process id is missing"
+fi
+
+if [ "X$JAVA_HOME" == "X" ];then
+  error_log_and_console_exit "$JAVA_HOME not set"
+fi
+
+JAVA_PATH=`ps efh -p $PROCESS_ID | awk -F' ' '{print $5}'`
+
+echo $JAVA_PATH | grep "java"| grep -v "jre"> /dev/null
+if [ $? -ne 0 ];then
+  JAVA_PATH=`echo $JAVA_PATH | sed 's/\/jre//'`
+fi
+
+JRCMD="`dirname $JAVA_PATH`/jrcmd"
+if [ "X$JRCMD" = "X./jrcmd" ];then
+  JRCMD="$JAVA_HOME/bin/jrcmd"
+fi
+JRSTACK="`dirname $JAVA_PATH`/jstack"
+if [ "X$JRSTACK" = "X./jstack" ];then
+  JRSTACK="$JAVA_HOME/bin/jstack"
+fi
+JRSTACK_FORCEFULLY="`dirname $JAVA_PATH`/jstack -F"
+if [ "X$JRSTACK_FORCEFULLY" = "X./jstack -F" ];then
+  JRSTACK_FORCEFULLY="$JAVA_HOME/bin/jstack -F"
+fi
+
+#to check whether process id is running or not 
+#PID=`ps -ef|awk -F ' ' '{print$2}'| grep $PROCESS_ID`
+#if [ "X$PID" != "X$PROCESS_ID" ];then
+#error_log_and_console_exit "process with $PROCESS_ID  not running"
+#fi
+
+get_vendor_name 
+# Done to get the vendor of java
+#JAVA_PATH=`ps efh -p $PROCESS_ID | awk -F' ' '{print $5}'`
+#echo $JAVA_PATH
+#JAVA_VENDOR=`$JAVA_PATH vendor| cut -d ':' -f 2`
+#echo "java vendor is $JAVA_VENDOR"
+
+
+get_user_and_owner
+
+run_cmd_frm_su_or_not
+
+# Check for IBM vendor first
+if [ "X$JAVA_VENDOR" = "XIBM Corporation" ]; then
+  if [ "X$THREAD_DUMP_LOG_FILE" = "X" ]; then # Log file is mendatery in case of IBM 
+    display_help_and_exit "Mandatory argument thread dump log file is missing."
+  fi
+  # Get log file path by removing filename from it, in case of IBM thread dump is created in dir form where process is started, so we need 
+  # that file path, currently taking it in argument, later we will get it by grepping in ps 
+  LOG_DIR_PATH=`dirname $THREAD_DUMP_LOG_FILE`
+take_ibm_thread_dump $PROCESS_ID $LOG_DIR_PATH
+elif [ -f $JRCMD ]; then
+  check_and_kill_prev_hanging_cmd
+  take_thread_dump_using_jrcmd
+elif [ -f $JRSTACK ]; then
+  check_and_kill_prev_hanging_cmd
+  take_thread_dump_using_jstack  
+else
+  if [ "X$THREAD_DUMP_LOG_FILE" = "X" ]; then
+    display_help_and_exit "Mandatory argument thread dump log file is missing."
+  fi
+  check_and_kill_prev_hanging_cmd
+  take_thread_dump
+fi
+
+rm -rf $ERR_FILE
+
+exit 0

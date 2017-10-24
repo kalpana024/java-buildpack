@@ -1,0 +1,60 @@
+##############################################################################################
+# Name    - cm_dvm_gen_vector 
+# Author  - Archana
+# Purpose - This file is to create space separated vector list depend on how many number of vector passed
+# Usage   - cm_dvm_gen_vector <Number of vector> [Vector Name]
+# Example - cm_dvm_gen_vector 6
+#            then create 6 vectors list (vector1 vector2 vector3 .... vector6)
+#            cm_dvm_gen_vector 3 dm_v
+#            then create 3 vectors list (dm_v1 dm_v2 dm_v3)
+# Initial version  :  Nov 12 2009
+##############################################################################################
+
+if [ $# = 0 ]; then
+  echo "Usage: cm_dvm_gen_vector <Number of vector> [Vector Name]"
+  exit -1
+fi
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+NUM_VECTOR=$1
+VECTOR_NAME=$2
+
+if [ `echo -n $VECTOR_NAME | wc -c` = 0 ];then
+  VECTOR_NAME="vector"
+fi
+
+if [ $NUM_VECTOR = 0 ];then 
+  echo "Error: Number of vector can not be 0"
+  exit -1
+fi
+
+create_vector_list()
+{
+  i=0
+  while [ $i -lt $NUM_VECTOR ]
+  do
+    ((i=i+1))
+    if [ $i -gt 1 ];then
+     echo -n " " 
+    fi
+    echo -n "$VECTOR_NAME$i"
+  done
+}
+
+create_vector_list 
+echo
+exit 0
