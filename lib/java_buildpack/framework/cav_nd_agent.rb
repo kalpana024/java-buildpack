@@ -59,8 +59,9 @@ module JavaBuildpack
 										BCI_LOGS	=> ENV['CAV_LOGS'],
         									NDC_HOST	=> ENV['CAV_NDC_HOST'],
         									NDC_PORT	=> ENV['CAV_NDC_PORT'])
+        									CAV_MON_HOME	=> ENV['CAV_MON_HOME'])
 
-        ENV['CAV_MON_HOME'] = '$PWD/.java-buildpack/cavisson/monitors'
+        #ENV['CAV_MON_HOME'] = '$PWD/.java-buildpack/cavisson/monitors'
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
 
         #application_name java_opts, credentials
@@ -85,6 +86,8 @@ module JavaBuildpack
       NDC_PORT = 'ndcPort'.freeze
 
       BCI_LOGS = 'BCILoggingMode'.freeze
+
+     # CAV_MON_HOME = 'CAV_MON_HOME'.freeze
 
       protected
 
