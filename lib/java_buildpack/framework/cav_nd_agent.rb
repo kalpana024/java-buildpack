@@ -58,7 +58,7 @@ module JavaBuildpack
         									ND_HOME 	=> '$PWD/.java-buildpack/cav_nd_agent',
 										BCI_LOGS	=> ENV['CAV_LOGS'],
         									NDC_HOST	=> ENV['CAV_NDC_HOST'],
-        									NDC_PORT	=> ENV['CAV_NDC_PORT'])
+        									NDC_PORT	=> ENV['CAV_NDC_PORT']),
         									CAV_MON_HOME	=> ENV['CAV_MON_HOME'])
 
         #ENV['CAV_MON_HOME'] = '$PWD/.java-buildpack/cavisson/monitors'
