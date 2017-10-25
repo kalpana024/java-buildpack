@@ -87,7 +87,7 @@ module JavaBuildpack
 
       BCI_LOGS = 'BCILoggingMode'.freeze
 
-     # CAV_MON_HOME = 'CAV_MON_HOME'.freeze
+      CAV_MON_HOME = 'CAV_MON_HOME'.freeze
 
       protected
 
