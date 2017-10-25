@@ -62,7 +62,7 @@ module JavaBuildpack
         									CAV_MON_HOME	=> ENV['CAV_MON_HOME'])
 
         #ENV['CAV_MON_HOME'] = '$PWD/.java-buildpack/cavisson/monitors'
-        set java_opts = -Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port='9990' -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.authenticate=false -Djava.rmi.server.hostname='66.220.31.140'
+        set java_opts = -Dcom.sun.management.jmxremote,-Dcom.sun.management.jmxremote.port='9990',-Dcom.sun.management.jmxremote.ssl=false,-Dcom.sun.management.jmxremote.authenticate=false,-Djava.rmi.server.hostname='66.220.31.140'
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
