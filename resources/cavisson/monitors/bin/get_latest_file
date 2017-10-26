@@ -1,0 +1,57 @@
+# Name    : get_latest_file
+# Purpose : To get last updated file
+# Usage   :
+#  get_latest_file -p <path> -f <file name prefix> 
+#    -p: option will specify the file path (directory)
+#    -f: option specifies the filename prefix (e.g. access.)
+#
+# For example: 
+#  get_latest_file -p "/var/www/hpd/logs" -f "debug_log."
+# output
+# debug_log.011012
+
+
+while getopts p:f:? arg
+do
+  case $arg in
+    p) FilePath="$OPTARG";;
+    f) FileNamePrefix="$OPTARG";;
+    ?) echo "Enter Valid File path with -f option" ;;
+  esac
+done
+
+if [ "XX$FilePath" = "XX" ]; then
+  echo "Enter file path using -p option"
+  exit -1
+fi
+
+if [ "XX$FileNamePrefix" = "XX" ]; then
+  echo "Enter file name prefix using -f option"
+  exit -1
+fi
+
+
+if [ ! -d ${FilePath} ]; then
+  echo "File path ${FilePath} does not exits"
+  exit -1
+fi
+
+#echo "-File name $FileNamePrefix"
+
+# TODO - If ls fails, then error is not coming
+FileName=`ls -t ${FilePath}/${FileNamePrefix}* | head -1`
+if [ $? != 0 ]; then
+  echo "File not found with file name prefix $FileNamePrefix at Path $FilePath"
+  exit -1
+fi
+        
+if [ "X$FileName" = "X" ]; then
+  echo "File not found with file name prefix $FileNamePrefix at Path $FilePath"
+  exit -1
+fi
+        
+echo "${FileName}"
+
+exit 0
+
+#End

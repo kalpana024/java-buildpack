@@ -58,6 +58,7 @@ module JavaBuildpack
         									ND_HOME 	=> '$PWD/.java-buildpack/cav_nd_agent',
         									BCI_LOGS	=> ENV['CAV_LOGS'],
         									NDC_HOST	=> ENV['CAV_NDC_HOST'],
+										CAV_MON_HOME	=> ENV['CAV_MON_HOME'],
         									NDC_PORT	=> ENV['CAV_NDC_PORT'])
 
         #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
@@ -85,6 +86,8 @@ module JavaBuildpack
       NDC_PORT = 'ndcPort'.freeze
 
       BCI_LOGS = 'BCILoggingMode'.freeze
+
+      CAV_MON_HOME = 'CAV_MON_HOME'.freeze
 
       protected
 

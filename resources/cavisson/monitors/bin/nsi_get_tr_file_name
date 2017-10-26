@@ -1,0 +1,66 @@
+# Name      : nsi_get_tr_file_name
+# Author    : Karuna/Neeraj
+# Purpsose  : To get the full path file name of give file of running test
+# Usage     : nsi_get_tr_file_name <file name> [<testrun> <work>]
+#             For example:
+#               nsi_get_tr_file_name event.log
+#
+# Following is sample mprof entry for using this
+# SPECIAL_MONITOR QANS3 cm_log_parser_SignOnFailure.gdf Log_Pattern_Vector 2 java cm_log_parser -c nsi_get_tr_file_name+event.log+$MON_TEST_RUN+work2 -i 10  -p "Msg1+No+member+record+in+the+database" -p "Msg2+member+status+is+not+active" -D
+# Modification History:
+#
+
+LOG_FILE=/tmp/nsi_get_tr_file_name.log
+
+> $LOG_FILE
+
+Usage()
+{
+  echo $*
+  echo $* >> $LOG_FILE
+  echo "Usage: nsi_get_tr_file_name <file name>"
+  echo "Usage: nsi_get_tr_file_name <file name>" >> $LOG_FILE
+  exit -1
+}
+
+
+#Option argument parsing
+if [ $# -eq 0 ];then
+  Usage "Mandatory argument missing"
+fi
+
+FileName=$1
+#FileName=event.log
+
+if [ $# -gt 1 ];then
+  export MON_TEST_RUN=$2
+fi
+
+if [ $# -gt 2 ];then
+  export MON_NS_WDIR=/home/netstorm/$3
+fi
+
+if [ "X$MON_TEST_RUN" = "X" ]; then
+  echo "MON_TEST_RUN is not set, exiting"
+  echo "MON_TEST_RUN is not set, exiting" >> $LOG_FILE
+  exit -1
+fi
+
+trun_no=$MON_TEST_RUN
+NS_WDIR=$MON_NS_WDIR
+
+#trun_no=`nsu_show_netstorm | awk '{ print $1 }' | tail -1`
+#if [ "XX$trun_no" = "XX" ];then
+#  echo "There is no test running"
+#  exit -1
+#fi
+
+if [ "XX" = "XX$NS_WDIR" ];then
+  echo "NS_WDIR is not set, setting to /home/netstorm/work" >> $LOG_FILE
+  export NS_WDIR=/home/netstorm/work
+fi
+
+echo "$NS_WDIR/logs/TR$trun_no/$FileName"
+
+exit 0
+

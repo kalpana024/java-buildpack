@@ -1,0 +1,280 @@
+################################################################################################
+# Name  : nsi_get_cmon_info 
+# Purpose: To get cmon information which includes 
+# ->  system info
+# ->  version
+# ->  running tests
+# ->  lsof
+# ->  threads
+# ->  Connections
+#
+# Usage: nsi_get_cmon_info -P <Cmon_Port> -l <Info_level(0/1)>"
+# -P -> cmon port     default is 7891
+# -l -> level of information. 0 stands for summary and 1 stands for detailed information.   default is 0
+#
+# Author Name     : Neeraj Jain
+#
+###################################################################################################
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+PS_CMD_FOR_SEARCH=""
+PS_USING_PID=""
+
+PIDFILE="$CAV_MON_HOME/sys/cmon.pid"
+
+set_ps_cmd()
+{
+  PS_USING_PID="ps -fp"
+  PS_CMD_FOR_SEARCH="ps -ef" # Do not use ps -lef as need pid at filed 2
+ 
+  OS_NAME=`uname`
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    if [ -f /usr/ucb/ps ];then
+      PS_USING_PID="/usr/ucb/ps -auxwww"
+      PS_CMD_FOR_SEARCH="/usr/ucb/ps -auxwww"
+    fi
+  fi
+}
+
+
+get_running_pid_by_ps()
+{
+  #Make sure only one space after DPKG=cmon. 
+  # Add $CAV_MON_HOME to support that more than one cmon in one machine
+
+  #Most customer machine do not have /ucb/ on their solaris server. That's why using standard ps command.
+  #Command: ps -o "pid args"
+  #output:
+  #   PID COMMAND
+  #   797 bash
+  #   793 -sh
+  #   3215 ps -o pid args
+  #   2865 java -DPKG=cmon -DCAV_MON_HOME=/export/home/netstorm/cavisson/monitors -DCLASSP
+  #This may not work in all cases, when JAVA_HOME or CAV_MON_HOME is large.
+  if [ "X$OS_NAME" = "XSunOS" -a ! -f /usr/ucb/ps ]; then
+    PID=`ps -o "pid args" | grep "\-DPKG=cmon \-DCAV_MON_HOME=$CAV_MON_HOME " | grep -v "grep" | awk '{print $1}'`
+  else
+    PID=`$PS_CMD_FOR_SEARCH | grep "\-DPKG=cmon \-DCAV_MON_HOME=$CAV_MON_HOME " | grep -v "grep" | awk '{print $2}'`
+  fi
+}
+
+set_cmon_pid()
+{
+  #Get pid from pid file
+  if [ -f $PIDFILE ];then
+    PID=`cat $PIDFILE` 
+    if [ "XX$PID" = "XX" ];then
+      get_running_pid_by_ps
+    fi
+  else
+    get_running_pid_by_ps
+  fi
+
+  if [ "XX$PID" = "XX" ];then
+    echo "CavMonAgent is not running"
+    exit 0
+  fi
+
+}
+
+show_cmon_lsof_count()
+{
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    CMON_LSOF_COUNT=`/usr/bin/pfiles -Fn $PID 2>&1| wc -l`    #count of open files
+    CMON_LSOF_COUNT=`expr $CMON_LSOF_COUNT - 2`     #Excluding the lines showing titles
+  else
+    CMON_LSOF_COUNT=`lsof -p $PID 2>/dev/null | wc -l`    #count of open files
+    CMON_LSOF_COUNT=`expr $CMON_LSOF_COUNT - 1`     #Excluding the line showing titles
+  fi
+  echo "Cmon LSOF Count : $CMON_LSOF_COUNT"
+}
+
+show_cmon_lsof()
+{
+  echo ""
+  echo "Following are list of open files:"
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    /usr/bin/pfiles -F $PID 2>&1
+  else
+    lsof -p $PID  2>&1 
+  fi
+  echo "---  End of open file ---"
+}
+
+show_cmon_threads_count()
+{
+  CMON_THREADS_COUNT=`ps -p $PID -Lf 2>&1 | wc -l`
+  CMON_THREADS_COUNT=`expr $CMON_THREADS_COUNT - 1`     #Excluding the line showing titles
+  echo "Cmon Threads Count : $CMON_THREADS_COUNT"
+}
+
+show_cmon_threads()
+{
+  echo ""
+  echo "Following are cmon threads:"
+  #using -p switch instead of using ps -eLf | grep $PID.
+  #Beacuse -eL switch will show theads of all processes.
+  #Also threads of processes like nsu_check_cmon will be displayed.
+  #
+  ps -p $PID -Lf 2>&1         
+  echo "---  End of cmon threads ---"
+}
+
+show_cmon_connections_count()
+{
+  echo ""
+  echo "Cmon connections Count:"
+  #
+  #Command "netstat -nat | grep -w $CMON_PORT | awk '{print $6}'|sort|uniq -c" will show count of each type of connection
+  #
+  #      8 ESTABLISHED
+  #      1 LISTEN
+  #      1 TIME_WAIT
+  #
+  #Using awk '{printf "%-15s%-5d\n",$2,$1}' We are showing connection type followed by count.
+  #
+  #Cmon connections Count:
+  #ESTABLISHED    8    
+  #LISTEN         1    
+  #TIME_WAIT      1
+  #
+  #for sun os connection count is handled for tcp connections only.. udp connections are not handled
+  #cmon port might be present in dest ip also
+  #In this case wrong cmon connection might be displayed
+  if [ "X$OS_NAME" = "XSunOS" ];then
+    netstat -na | grep -w $CMON_PORT | nawk '{print $7}'|sort|uniq -c|nawk '{printf "%-15s%-5d\n",$2,$1}'
+  else
+    netstat -nat | grep -w $CMON_PORT | awk '{print $6}'|sort|uniq -c|awk '{printf "%-15s%-5d\n",$2,$1}'
+  fi 
+}
+
+show_cmon_connections()
+{
+  #cmon port might be present in dest ip also
+  #In this case wrong cmon connection might be displayed
+  echo ""
+  echo "Following are cmon connections:"
+  if [ "X$OS_NAME" = "XSunOS" ];then
+    netstat -na | grep -w $CMON_PORT 2>&1
+  else
+    netstat -nat | grep -w $CMON_PORT 2>&1
+  fi
+  echo "---  End of cmon connections ---"
+}
+
+show_cmon_version()
+{
+  $CAV_MON_HOME/bin/cmon version 2>/dev/null
+}
+
+
+get_cmon_running_tests_count()
+{
+   CMON_RUNNING_TESTS_COUNT=0
+  if [ -d $CAV_MON_HOME/logs/running_tests ]; then
+    CMON_RUNNING_TESTS_COUNT=`ls $CAV_MON_HOME/logs/running_tests 2>/dev/null | wc -l`
+  fi
+}
+
+show_cmon_running_tests_count()
+{
+  get_cmon_running_tests_count
+  echo "Cmon Running Tests Count : $CMON_RUNNING_TESTS_COUNT"
+}
+
+show_cmon_running_tests()
+{
+  get_cmon_running_tests_count
+  echo "Following are running test runs:"
+  if [ $CMON_RUNNING_TESTS_COUNT -gt 0 ]; then
+    ls -l $CAV_MON_HOME/logs/running_tests| sed '1d' 2>/dev/null    #removing first line which has total value
+    echo ""
+  else
+    echo "No test is running."
+  fi
+}
+
+show_cmon_pid()
+{
+  get_running_pid
+  if [ "X$PID" != "X" ];then
+    echo $PID
+  else
+    echo "CavMonAgent process is not running"
+    exit 255
+  fi
+}
+
+show_system_info()
+{
+  echo "Host Name : `uname -n`"
+  echo ""
+  echo "Ulimit:"
+  #echo "Open files limit: `ulimit -n`"
+  #echo "max user processes limit: `ulimit -u`"
+  ulimit -a
+  echo ""
+}
+
+show_cmon_info()
+{
+  echo "`date`: -- Start of cmon info (PID = $PID)"
+  show_cmon_version
+  show_system_info
+
+  if [ $INFO_LEVEL -eq 0 ]; then      #Shows summary only
+    show_cmon_running_tests_count
+    show_cmon_lsof_count
+    show_cmon_threads_count
+    show_cmon_connections_count
+  elif [ $INFO_LEVEL -eq 1 ]; then    #Shows Detailed info
+    show_cmon_running_tests
+    show_cmon_lsof
+    show_cmon_threads
+    show_cmon_connections
+  fi
+  echo "`date`: -- End of cmon info (PID = $PID)"
+}
+
+
+
+Usage()
+{
+  echo "$*"
+  echo "Usage -P <Cmon_Port> -l <Info_level(0/1)>"
+  exit -1
+}
+###############################################################################################################################
+
+#initializing variables
+CMON_PORT=7891
+INFO_LEVEL=0
+
+#Validating arguments
+while getopts P:l: choice
+do
+  case $choice in 
+    P)  CMON_PORT=$OPTARG;;             #By default 7891
+    l)  INFO_LEVEL=$OPTARG;;            #By default 0; 0 for summary and 1 for detailed info
+    ?)  Usage "Error: Invalid Arguments";;
+  esac
+done
+
+set_ps_cmd
+set_cmon_pid
+show_cmon_info
+
+exit 0

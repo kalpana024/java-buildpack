@@ -1,0 +1,30 @@
+# Name - cm_test_all_graph_types
+# Purpose - This is a sample custom monitor to send dummy data to test all graph types
+# Option - 'Run Every Time'
+# GDF - cm_test_all_graph_types.gdf in netstorm machine ($NS_WDIR/samples)
+#       Copy it to $NS_WDIR/sys to use this GDF file
+# Keyword -
+# CUSTOM_MONITOR /opt/cavisson/monitors/samples/cm_test_all_graph_types cm_test_all_graph_types.gdf 1
+#
+# Custom Monitor Output -
+# Hard coded (see echo command)
+#
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+echo "153 67 89 7896 1009 56 134 57 189 75896 1200 52 65543 76653 12457 87643 54321 24536 180 161 140 580 90 60 75 89 100 150 330 280 3456 8156 1456 2956 989 219 189 709 70 55 48 39 280 462 191 710 18092 66 78 45 89 34580 170 210 180 110 2310 1356 5196 2256 3916 71321 381 429 689 319 4891 51 85 78 64 89060"
+
+exit 0

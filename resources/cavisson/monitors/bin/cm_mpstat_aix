@@ -1,0 +1,302 @@
+# Name - cm_mpstat_aix (CPU statistics)
+# Purpose - This is a sample dynamic custom monitor to get data from mpstat  command
+# It parses output of mpstat and outputs all data in one line
+# Option - 'Run Once'
+# GDF - cm_mpstat_aix.gdf 
+# Keyword -
+# DYNAMIC_VECTOR_MONITOR 192.168.1.66 NS cm_mpstat_aix.gdf 2 cm_mpstat_aix -i 10 EOC cm_mpstat_aix -v
+# Shell Output -
+#         
+# Initial version - Thursday, August 30 2012
+# Modification    -
+# Author Name     - Prachi Kumari
+#
+# mpstat command output -
+#
+#On Aix:
+#
+#mpstat
+#
+#System configuration: lcpu=8 ent=1.0 mode=Uncapped
+#
+#cpu  min  maj  mpc  int   cs  ics   rq  mig lpa sysc us sy wa id   pc  %ec  lcs
+# 0 1476419456 250000 41552505 1487736488 2512579918 122158886   10 6387740 100 12170898521 33 61  0  7 0.00  0.2 1258507311
+# 1 91536250 4435 7610811 65372333 118199192 6361352    0 6334069 100 825035583  8  6  0 86 0.00  0.1 92906380
+# 2 4582844 1143 6164915 53609217 2596475 1125599    0 878450 100 15002186  0  2  0 98 0.00  0.0 56768412
+# 3 4067132 1396 6165647 53448496 2550418 1024146    0 889187 100 16213410  0  2  0 98 0.00  0.0 56839658
+# 4 35021249 39239 6159770 16736958 2335834 861924    0 958554 100 165723119 28 31  1 39 0.00  0.0 12260255
+# 5 2959266 1759 6151747 16160936 937276 649986    0 772492 100 6376683  3 14  1 82 0.00  0.0 10296360
+# 6 1490409 1160 6151106 16131996 718030 603993    0 753479 100 3088398  2 12  1 86 0.00  0.0 10152892
+# 7 1476762 1434 6151198 110595036 690661 573913    0 693754 100 2914592  1 60  0 39 0.00  0.0 112821784
+# U    -    -    -    -    -    -    -    -   -    -  -  -  0 100 1.00 99.6    -
+# ALL 1617553368 300566 86107699 1819791460 2640607804 133359799   10 17667725 100 13205252492  0  0  0 100 0.00  0.4 1610553052
+
+#mpstat -w 1  (here w -> wide column output, 1 -> is interval in secs)
+#
+#System configuration: lcpu=16 ent=1.5 mode=Uncapped
+#
+#cpu    min    maj    mpc    int     cs    ics     rq    mig   lpa   sysc    us    sy    wa    id    pc   %ec   lcs
+#  0    137      0      0   7938  14537    102      3      1 100.0  17353  17.4  80.5   0.1   2.0  0.10   6.7  1353
+#  1      0      0      0    323      6      0      0      1 100.0     12   0.2   1.3   0.0  98.5  0.02   1.3   326
+#  2      0      0      0     51      0      0      0      0     -      0   0.0   0.5   0.0  99.5  0.02   1.3    51
+#  3      0      0      0     41      0      0      0      0     -      0   0.0   0.3   0.0  99.7  0.02   1.3    41
+# 15      0      0      0    364      0      0      0      0     -      0   0.0  76.0   0.0  24.0  0.00   0.1   358
+#  U      -      -      -      -      -      -      -      -     -      -     -     -   0.0  89.4  1.34  89.4     -
+#ALL    137      0      0   8717  14543    102      3      2 100.0  17365   1.2   5.5   0.0  93.3  0.16  10.6  2129
+#
+#cpu    min    maj    mpc    int     cs    ics     rq    mig   lpa   sysc    us    sy    wa    id    pc   %ec   lcs
+#  0      0      0      0    320    640      4      0      3 100.0    769  31.3  63.7   0.0   5.0  0.05   3.6    91
+#  1      0      0      0      2      0      0      0      1 100.0      0   0.0   1.1   0.0  98.9  0.01   0.8     2
+#  2      0      0      0      1      0      0      0      1 100.0      0   0.0   1.2   0.0  98.8  0.01   0.8     1
+#  3      0      0      0      1      0      0      0      1 100.0      0   0.0   1.4   0.0  98.6  0.01   0.8     2
+#  4      0      0      0      0      0      0      0      1 100.0      0   0.0  49.1   0.0  50.9  0.00   0.0     0
+#  5      0      0      0      0      0      0      0      1 100.0      0   0.0  47.0   0.0  53.0  0.00   0.0     0
+#  6      0      0      0      0      0      0      0      1 100.0      0   0.0  56.9   0.0  43.1  0.00   0.0     0
+#  7      0      0      0      0      0      0      0      1 100.0      0   0.0  57.0   0.0  43.0  0.00   0.0     0
+#  8      0      0      0      0      0      0      0      1 100.0      0   0.0  47.3   0.0  52.7  0.00   0.0     0
+#  9      0      0      0      0      0      0      0      1 100.0      0   0.0  47.2   0.0  52.8  0.00   0.0     0
+# 10      0      0      0      0      0      0      0      1 100.0      0   0.0  57.3   0.0  42.7  0.00   0.0     0
+# 11      0      0      0      0      0      0      0      1 100.0      0   0.0  57.3   0.0  42.7  0.00   0.0     0
+# 12      0      0      0      0      0      0      0      1 100.0      0   0.0   0.7   0.0  99.3  0.00   0.1     0
+# 13      0      0      0      0      0      0      0      1 100.0      0   0.0   0.6   0.0  99.4  0.00   0.1     0
+# 14      0      0      0      0      0      0      0      1 100.0      0   0.0   0.8   0.0  99.2  0.00   0.1     0
+# 15      0      0      0     11      0      0      0      1 100.0      0   0.0  70.3   0.0  29.7  0.00   0.1    11
+#  U      -      -      -      -      -      -      -      -     -      -     -     -   0.0  99.2  1.49  99.2     -
+#ALL      0      0      0    335    640      4      0     18 100.0    769   0.1   0.2   0.0  99.6  0.09   6.2   107
+#
+# Custom Monitor Output -
+
+#TODO Remove old code and comments that are not being used.
+#Previously we were using 'mpstat -w $interval > file_name' command;
+#this command appends data in the file;
+#This is not required as we need current data sample only.
+#Hence now we are using 'mpstat -w $interval 1 > file_name' command;
+#This command waits for $interval time and shows data '1' time
+#command output:
+#
+#System configuration: lcpu=16 ent=1.5 mode=Uncapped
+#
+#cpu    min    maj    mpc    int     cs    ics     rq    mig   lpa   sysc    us    sy    wa    id    pc   %ec   lcs
+#  0      0      0      0   2002   4100     30      1      1 100.0   4667  35.5  58.7   0.0   5.8  0.04   2.9   691
+#  1      0      0      0      9      0      0      0      0     -      0   0.0   0.4   0.0  99.6  0.01   0.6    10
+#  2      0      0      0     13      0      0      0      1 100.0      0   0.0   0.7   0.0  99.3  0.01   0.6    13
+#  3      0      0      0     12      0      0      0      0     -      0   0.0   0.7   0.0  99.3  0.01   0.6    13
+# 12      0      0      0     52      0      0      0      0     -      0   0.0  67.9   0.0  32.1  0.00   0.0    53
+#  U      -      -      -      -      -      -      -      -     -      -     -     -   0.0  95.1  1.43  95.1     -
+#ALL      0      0      0   2088   4100     30      1      2 100.0   4667   1.0   1.8   0.0  97.2  0.07   4.9   780
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+
+INTERVAL_SECS=$MON_FREQUENCY
+
+VECTOR_FLAG="0"
+NUM_CPUs=0
+PID="$$"
+MPSTAT_OUT_FILE=$CAV_MON_TMP_DIR/mpstat_aix.out$$
+#MPSTAT_TMP_FILE=$CAV_MON_TMP_DIR/mpstat_aix.tmp$$
+#MPSTAT_TAIL_OUT_FILE=$CAV_MON_TMP_DIR/tail_output$$
+
+get_num_cpu()
+{
+  mpstat > $MPSTAT_OUT_FILE
+  #Calculating number of CPU from below mentioned line:
+  #System configuration: lcpu=8 ent=1.0 mode=Uncapped (we will get this line in mpstat command output)
+  NUM_CPUs=`grep lcpu $MPSTAT_OUT_FILE | awk -F' ' '{print $3}' | awk -F'=' '{print $2}'`  
+}
+
+#This will show data of all the CPUs
+show_data()
+{
+  get_num_cpu
+  while true
+  do
+    #'mpstat -w $INTERVAL_SECS 1' will show data one time after $$INTERVAL_SECS interval.
+    #'tail -n +5' is skipping first 4 lines.
+    #We are not skipping last 2 lines because head command in aix has no option to do it;
+    #we'll have to count all lines in file, then we can consider first n-2 lines.
+    #We have handled invalid lines later; hence no need to skip these lines.
+    mpstat -w $INTERVAL_SECS 1 | tail -n +5 >$MPSTAT_OUT_FILE
+   
+    #unsetting array as it contains data of last execution of loop. 
+    unset cpu_inst_data
+    while read line
+    do
+      cpu_inst=`echo $line| awk -F' ' '{print $1}'` #data line will be stored at cpu_inst index.
+      cmd_ret=`echo $cpu_inst | grep "^[0-9]*$"`    #Checking if cpu_inst is numeric.
+      cmd_ret=$?
+      if [ "$cmd_ret" = "0" ]; then
+        cpu_inst_data[$cpu_inst]="$line" 
+      fi
+    done<$MPSTAT_OUT_FILE
+
+    index=0
+    while [ $index -lt $NUM_CPUs ];
+    do
+      if [ "${cpu_inst_data[$index]}" = "" ]; then
+        echo "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+      else
+        echo ${cpu_inst_data[$index]} | awk -F' ' '{print $2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11" "$12" "$13" "$14" "$15" "$16" "$17" "$18}' | sed s/-/0/g
+      fi
+      index=`expr $index + 1`
+    done
+  done
+}
+
+
+#This will show data of all the CPUs
+show_data1()
+{
+  chk=0     #to check if mpstat is executing first time.
+  prev=0    #to store previous value of tot_num_lines
+
+  get_num_cpu
+
+  #trap 'kill %1; rm -f $MPSTAT_OUT_FILE ; exit' 1 2 3 4 5
+ 
+  mpstat -w $INTERVAL_SECS >$MPSTAT_OUT_FILE &
+
+  nohup $UNIX_SHELL nsi_kill_child_of_monitors -p $PID -i 10 -f $MPSTAT_OUT_FILE 2>/dev/null&
+  lib_sleep `expr $INTERVAL_SECS + 1`
+ 
+  while true
+  do
+    tot_num_lines=`cat $MPSTAT_OUT_FILE | wc -l`     #Total number of lines in output of command: mpstat
+    
+    if [ $chk -eq 0 ]; then                         
+      prev=$tot_num_lines
+      tail_num_lines=`expr $tot_num_lines - 4`         #Will use this value with tail command, to exclude first four lines of output of command: mpstat
+      head_num_lines=`expr $tail_num_lines - 2`
+      tail -$tail_num_lines $MPSTAT_OUT_FILE | head -$head_num_lines >$MPSTAT_TMP_FILE 
+    else
+      tot_plus_header=`expr $prev + 2`
+      cat $MPSTAT_OUT_FILE | tail -n +$tot_plus_header >$MPSTAT_TAIL_OUT_FILE
+      val=`cat $MPSTAT_TAIL_OUT_FILE | wc -l`
+      final_val=`expr $val - 2`
+      cat $MPSTAT_TAIL_OUT_FILE | head -$final_val > $MPSTAT_TMP_FILE 
+      prev=$tot_num_lines
+    fi
+
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi 
+
+    while read line
+    do
+      cpu_inst=`echo $line | awk -F' ' '{print $1}'`   #Storing cpu sequence number
+      cpu_inst_data[$cpu_inst]=`echo $line`            #Storing cpu data in an array, where index = cpu sequence number
+    done<$MPSTAT_TMP_FILE
+
+    #Instead of doing:
+    #tail -$tail_num_lines $MPSTAT_OUT_FILE | head -$head_num_lines | awk -F' ' '{printf $2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11" "$12" "$13" "$14" "$15" "$16     " "$17" "$18"\n"}' | sed s/-/0/g
+
+    #We are doing in following way because command:  mpstat -w $INTERVAL_SECS, sometimes gives data of all the CPUs (cpu: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15) and sometimes it     will give data of only few CPUs (cpu: 0 1 2 3 15).
+
+    i=0
+    while [ $i -ne $NUM_CPUs ] 
+    do
+      cpu_inst=`echo ${cpu_inst_data[$i]} | awk -F' ' '{print $1}'`
+      #Data format:
+      #cpu  min  maj  mpc  int  cs   ics  rq  mig  lpa  sysc  us  sy  wa  id  pc  %ec  lcs
+      #$1   $2   $3   $4   $5   $6   $7  $8   $9   $10   $11 $12 $13 $14 $15 $16  $17  $18
+  
+      #If value of i matches with value of cpu_inst then it means for this particular value of i(cpu) we have data hence show data.
+      #Else show zero for that particular value of i(cpu).
+
+      if [ "X$i" = "X$cpu_inst" ];then
+        echo ${cpu_inst_data[$i]} | awk -F' ' '{print $2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11" "$12" "$13" "$14" "$15" "$16" "$17" "$18}' | sed s/-/0/g
+      else
+        echo "0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+      fi
+ 
+      i=`expr $i + 1`
+    done
+
+    chk=1 
+    lib_sleep $INTERVAL_SECS
+  done
+}
+
+# This will show all CPU on single line in following format:
+# <vector_prefix><CPU><Sequence_number_of_cpu>
+#Example: For -v NS and lcpu=3, output will be: NSCPU0 NSCPU1 NSCPU2 NSCPU3
+show_vectors()
+{
+  get_num_cpu
+ 
+  i=0 
+
+  while [ $i -lt $NUM_CPUs ] #Storing all the CPUs
+  do
+    if [ "X$vector_prefix" = "Xnoprefix" ]; then
+      CPU_LIST[i]="CPU""$i"
+    else
+      CPU_LIST[i]="$vector_prefix""CPU""$i"
+    fi
+    
+    i=`expr $i + 1`
+  done
+  echo ${CPU_LIST[@]} 
+  rm -f $MPSTAT_OUT_FILE
+}
+
+
+display_help_and_exit()
+{
+  echo "Usage: cm_mpstat_aix [-v <vector_prefix> ] or [-i <Interval>]"
+  echo "-v: option used to get vector list for Command (mpstat -w 1 1). Prefix will added before these vector names"
+  echo "-i: used for interval (in seconds)"
+  echo "-X: used for <vector prefix/noprefix>"
+  echo "-L: used for <header/data>"
+  exit -1
+}
+
+
+while getopts i:v:X:L:? arg
+do
+  case $arg in
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG
+       ;;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "$XOPTARG" = "Xheader" -o "$XOPTARG" = "XHEADER" ];then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    i) INTERVAL_SECS=$OPTARG
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from iostat command
+  show_vectors
+else #To get data on every specified interval
+  show_data
+fi
+
+rm -f $MPSTAT_OUT_FILE
+
+exit 0

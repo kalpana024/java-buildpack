@@ -1,0 +1,69 @@
+#----------------------------------------------------------------------
+# Name            :  chm_tcpdump
+# Author          :  Neeraj Jain
+# Purpose         :  To start tcpdump and save output in a file
+# Usage           :  chm_tcpdump <out_file_name> <tcpdump arguments>
+# Where:
+#       
+#Example -
+#        chm_tcpdump /tmp/dos_attack_tcp_dump -i  eth0 port 80
+
+#----------------------------------------------------------------------
+
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+
+start_tcp_dump()
+{
+PID=$$
+
+  #tcpdump command hangs after test is over, so start kill shell for it
+  nohup nsi_kill_child_of_monitors -p $PID -i 2 2>/dev/null&
+
+  tcpdump $TCP_DUMP_ARGS > $TCP_DUMP_OUT_FILE_NAME 2>&1
+  if [ $? != 0 ]; then
+    ns_log_event "Major" "Error in tcpdump"
+    ns_check_mon_fail_and_exit
+  fi
+
+}
+
+
+Usage()
+{
+  echo "Usage:"
+  echo "$0 <tcp_dump_out_file_name> [<tcpdump arguments>]"
+  echo "For example:"
+  echo "$0 /tmp/dos_attack_tcp_dump -i  eth0 port 80"
+  ns_check_mon_fail_and_exit
+}
+
+
+if [ "X$#" = "X0" ]; then
+  echo "Error: Bad Arguments"
+  Usage
+  ns_check_mon_fail_and_exit
+fi
+
+TCP_DUMP_OUT_FILE_NAME=$1
+shift
+TCP_DUMP_ARGS=$*
+
+start_tcp_dump
+
+ns_check_mon_pass_and_exit
+exit 0
+

@@ -1,0 +1,881 @@
+# Name    : cm_ps_data_ex
+# Purpose : To get elapsed time, CPU time, memory used, shared memory, size of a process using pid and Number of threads.
+#           This is run once monitor.
+#           We added run once option in standard_monitor.dat in 3.9.0. 
+# Usage   :
+#  cm_ps_data  -p <pid> or -f <pidfile> or -c <cmd> or -s <search pattern> or -s <search pattern> and -O <ORD> -i <interval> -D <debug log>  
+#    -p: option will specify the pid of the process.
+
+#    -f: option specifies the filename which contains the pid of the process.
+#        read the pid from file specified, as do same as -p option
+
+#    -c: option will specify the command (with absolute path) which will return the pid of the process.
+#        At first read already existing "UserName"_"CmdName".pid in /tmp/          
+#        Ex: if user is netstorm & command is ps -ef | grep xyz ; then file name will be netstorm_ps.pid
+#        Case:1 Empty File --> run command which will create this file.  
+#        Case:2 Process in file not running -->run command which will create this file with new pid.
+#
+#    -s: option will specify the pattern that is used to search and return the pid of the process.
+#    
+#    -O: occurrence number (1 to N) to select the specified occurrence. Default is to give error if more than one process.
+#
+#    -i: interval(in seconds). Default is 10 seconds
+#
+#    -D: option is to enable debug.
+#
+# Modification: 30/07/2012 
+#               Prachi: Added new argument -O <ORD> to handle multiple occurance of a particular search pattern. (Req. from Macys)
+# Modification: 01/09/2012
+#               Prachi: Changes way of array creation in function: create_array_of_pid() from: "array=(2,3,1)" to "using for loop".                                           (Enhancement for Kohls(MqServer))
+# Modification: 08/10/2012 
+#               Prachi: Added three new fields: CPU_TIME_PER, MEMORY_USED, SHR_MEM. (Req. from Kohls)
+# Modification: 01/11/2012
+#               Prachi: Changes cm_ps_data_ex from MON_OPTION=1/2 to MON_OPTION=2. 
+# Modification: 01/05/2013
+#               Prachi: Added one more graph "Number of threads".
+# Modification: 11/07/2013
+#               Prachi: Removing top command logic and doing some code cleanup.
+#                       Removed "SHR_MEM" graph and calculating CPU_TIME_PER & MEMORY_USED using formula
+# Modification: 21/02/2014
+#               Krishna: replacing all awk with 'AWK_CMD' to set nawk in case of SunOS
+
+# 1 Day = 24*60*60 = 86400 secs
+# 1 Hour = 60*60
+# 1 Min = 60
+DAY_IN_SECS=86400
+HRS_IN_SEC=3600
+MIN_IN_SEC=60
+PROCESS_ID=""
+COMMAND=""
+PS_CMD=""
+CMD_OUTPUT=""
+FIELD_1=""
+FIELD_2=""
+FIELD_3=""
+FIELD_4=""
+ELAPSED_TIME=""
+TIME=""
+VIRTUAL_PROCESS_SIZE=""
+RESIDENT_SET_SIZE=""
+CPU_TIME_PER=""
+PREV_CPU_TIME=0
+MEMORY_USED=""
+NUMBER_OF_THREADS=""
+DEBUG=0
+FLAG=0
+PID_FROM_FILE_OPTION=0
+PS_CMD_FOR_DATA=""
+BIT_SET_AFTER_SLEEP=0
+PID="$$"
+write_flag_not_run=0
+write_flag_more=0
+E_O_NUM=0
+OS_NAME=`uname`
+
+#For timestamp calculations
+BEFORE_WRITE_TIMESTAMP=0 
+AFTER_WRITE_TIMESTAMP=0
+TIMESTAMP_DIFF=0 
+first_time=1
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+export CAV_MON_HOME
+
+if [ -f /etc/lsb-release ]; then
+  version=`cat /etc/lsb-release | grep DISTRIB_RELEASE | awk -F'=' '{print $2}' | cut -d'.' -f 1`
+else
+  version=-1
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+INTERVAL_SECS=$MON_FREQUENCY
+
+#Linux,AIX
+if [ "X$OS_NAME" = "XAIX" ]; then
+  SYS_MEM=`svmon -G`
+  TOTAL_MEM=`echo $SYS_MEM | $AWK_CMD -F' ' '{print $8}'` #frames
+  if [ $BC_AVAILABLE -eq 1 ];then 
+    TOTAL_MEM=`echo " scale=2; $TOTAL_MEM * 4 * 1024" | bc ` #bytes
+  else
+    TOTAL_MEM=`$AWK_CMD -v "var1=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 * 4 * 1024)}'` 
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TOTAL_MEM=`echo " scale=2; $TOTAL_MEM / 1024" | bc ` #KB
+  else
+    TOTAL_MEM=`$AWK_CMD -v "var1=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 / 1024)}'`
+  fi
+elif [ "X$OS_NAME" = "XSunOS" ]; then
+  SYS_MEM=`prtconf | grep Mem`
+  TOTAL_MEM=`echo $SYS_MEM | $AWK_CMD -F' ' '{print $3}'` #MB
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TOTAL_MEM=`echo " scale=2; $TOTAL_MEM * 1024" | bc ` #KB
+  else
+    TOTAL_MEM=`$AWK_CMD -v "var1=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 * 1024)}'`
+  fi
+else
+  SYS_MEM=`free -k`
+  TOTAL_MEM=`echo $SYS_MEM | $AWK_CMD -F' ' '{print $8}'`
+fi
+
+#This gives following error in linux. So sending to dev null.
+# Not sure if we need this for other OS
+# declare: `SEARCH_PATTERN_ARR[]': not a valid identifier
+declare SEARCH_PATTERN_ARR[] 2>/dev/null
+
+              
+OS_NAME=`uname`
+
+debug_log()
+{
+  if [ $DEBUG -eq 1 ];then
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+info_log()
+{
+  ns_log_event "Information" "$*"
+}
+
+error_log()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+}
+
+error_log_and_exit()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+  exit -1
+}
+
+error_log_and_console()
+{
+  echo "$*"
+  error_log "$*"
+}
+
+display_help_and_exit()
+{
+  error_log_and_console "Incorrect usage. Usage: cm_ps_data  -p <pid> or -f <pidfile> or -c <command> or -s <search pattern> or -s <search pattern> and -O <ORD> -i <interval> -D"
+  
+  echo "  -p: option will specify the pid of the process."
+  echo "  -f: option specifies the filename which contains the pid of the process."
+  echo "  -c: option will specify the command (with absolute path) which will return the pid of the process."
+  echo "  -s: option will specify the search pattern to find the pid of the process."
+  echo "  -O: option will specify the occurrence number (1 to N) to select the specified occurrence. Default is to give error if more than one process. -O option is applicable only with -s option"
+  echo "  -i: option will specify the interval in seconds."
+  echo "  -D: option is to enable debug."
+  exit 1
+}
+
+#this method operates on string like HH:MM:SS
+get_time_in_sec()
+{
+   debug_log "get_time_in_sec(): time string = $1"
+   
+   COUNT=`echo $1 | $AWK_CMD -F":" '{print NF}'`
+   if [ $COUNT -eq 1 ];then
+     TIME_STR=`echo "00:00:$1"` 
+   elif [ $COUNT -eq 2 ];then
+     TIME_STR=`echo "00:$1"` 
+   else
+     TIME_STR=$1
+   fi
+  
+   debug_log "get_time_in_sec(): time string(complete) = $TIME_STR"
+
+   HH=`echo $TIME_STR | $AWK_CMD -F":" '{print $1}'`
+   MM=`echo $TIME_STR | $AWK_CMD -F":" '{print $2}'`
+   SS=`echo $TIME_STR | $AWK_CMD -F":" '{print $3}'`
+   
+   TIME_IN_SECS=`expr \( $HH \* $HRS_IN_SEC \) + \( $MM \* $MIN_IN_SEC \) + $SS`
+   debug_log "get_time_in_sec(): time = $TIME_IN_SECS"
+   echo $TIME_IN_SECS
+}
+
+
+#this method operates on string like DD-HH:MM:SS,
+get_time_in_sec_with_days()
+{
+   STR=$1
+   debug_log "get_time_in_sec_with_days(): time string = $STR" 
+
+   NUM_FIELDS=`echo $1 | $AWK_CMD -F"-" '{ print NF}'`
+
+   if [ $NUM_FIELDS -eq 2 ];then
+     DAY=`echo $STR | $AWK_CMD -F"-" '{ print $1}'`
+     TEMP=`echo $STR | $AWK_CMD -F"-" '{ print $2}'`
+     debug_log "get_time_in_sec_with_days(): time string = $TEMP and NUM_FIELDS = $NUM_FIELDS" 
+     LOCAL_TIME=`get_time_in_sec $TEMP`
+   else
+     DAY=0
+     debug_log "get_time_in_sec_with_days(): time string = $STR and NUM_FIELDS = $NUM_FIELDS" 
+     LOCAL_TIME=`get_time_in_sec $STR`
+    fi
+
+   TOTAL_TIME=`expr \( $DAY \* $DAY_IN_SECS \) + $LOCAL_TIME`
+   debug_log "get_time_in_sec_with_days(): total time in secs = $TOTAL_TIME" 
+   echo $TOTAL_TIME
+}
+
+get_ps_data()
+{
+  if [ "X$PROCESS_ID" = "X" ]; then
+    return
+  fi
+
+  #Why sleep is here???
+  lib_sleep 1
+
+  PROCESS_ID=$1
+
+  debug_log "get_ps_data() Called: PROCESS_ID = $PROCESS_ID "
+  if [ "X$OS_NAME" = "XAIX" ];then
+    OPTION="'etime time vsz rssize args'"    
+  else #Linux, and other?
+    OPTION="'etime time vsz rss args'"    
+  fi
+
+  PS_CMD="$PS_CMD_FOR_DATA -p $PROCESS_ID -o $OPTION  | grep -v ELAPSED"
+
+  debug_log "get_ps_data(): Command = $PS_CMD"
+  CMD_OUTPUT=`eval $PS_CMD 2>/dev/null`
+  RET=$?
+  # CMD_OUTPUT=`grep -v "ELAPSED" $TEMP_FILE 2>/dev/null`
+  debug_log "get_ps_data(): ps o/p = $CMD_OUTPUT"
+
+  if [ "X$RET" != "X0" ];then
+    ps_not_running_error
+    return 
+  else
+    write_flag_not_run=0
+  fi
+
+  #Total number of kernel threads owned by the process
+  #NUMBER_OF_THREADS=`ps -o 'thcount' -p $PROCESS_ID | tail -1`
+  #NUMBER_OF_THREADS=`$PS_CMD_FOR_DATA -o 'thcount' -p $PROCESS_ID | tail -1`
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    NUMBER_OF_THREADS=`$PS_CMD_FOR_DATA -o 'nlwp' -p $PROCESS_ID | tail -1`
+  elif [ "X$OS_NAME" = "XLinux" ]; then
+    if [ $version -eq 12 ]; then
+      NUMBER_OF_THREADS=`$PS_CMD_FOR_DATA -o 'thcount' -p $PROCESS_ID | tail -1`
+    elif [ $version -ge 14 ]; then
+      NUMBER_OF_THREADS=`$PS_CMD_FOR_DATA -o 'nlwp' -p $PROCESS_ID | tail -1` 
+    else
+      NUMBER_OF_THREADS=`$PS_CMD_FOR_DATA -o 'nlwp' -p $PROCESS_ID | tail -1`
+    fi
+  else
+    NUMBER_OF_THREADS=`$PS_CMD_FOR_DATA -o 'thcount' -p $PROCESS_ID | tail -1`
+  fi
+
+  debug_log "NUMBER_OF_THREADS=$NUMBER_OF_THREADS"
+  
+  calc_final_ps_data
+  return 0
+}
+
+# This used for both command and search option. 
+# In case of ORD, it is not used
+create_pid_file_by_cmd()
+{
+  debug_log "create_pid_file_by_cmd(): Called. PROCESS_FILE_BY_COMMAND = $PROCESS_FILE_BY_COMMAND"
+
+  PROCESS_ID=`cat $PROCESS_FILE_BY_COMMAND 2>/dev/null`
+
+  if [ $? -eq 0 -a "XX$PROCESS_ID" != "XX" ];then
+    debug_log "create_pid_file_by_cmd(): Process id file $PROCESS_FILE_BY_COMMAND already exists with PROCESS_ID = $PROCESS_ID"
+
+    # chk process is already running
+    ps -p $PROCESS_ID >/dev/null 2>&1
+    if [ $? -eq 0 ];then
+      debug_log "create_pid_file_by_cmd(): Process $PROCESS_ID is already running." 
+      return
+    fi
+  fi
+  #get process is by running command
+  eval $COMMAND >$PROCESS_FILE_BY_COMMAND 2>/dev/null
+  
+  if [ $? != 0 ];then
+    error_log_and_exit "Error in the execution of the command $COMMAND"
+  fi
+  #this time have to exit on any error
+  chk_process_file $PROCESS_FILE_BY_COMMAND
+}
+
+get_search_pattern_list()
+{
+  echo ${SEARCH_PATTERN_ARR[0]}
+}
+
+more_than_one_ps()
+{
+if [ $write_flag_more -ne 2 ]; then
+  #if [ $search_count -gt 0 ]; then
+  if [ $search_count -gt 1 ]; then
+    error_log "More than one process (`sed '{:q;N;s/\n/ /g;t q}' $PROCESS_FILE`) running with the specified search pattern `get_search_pattern_list`"
+  elif [ "XX$COMMAND" != "XX" ]; then
+    error_log "More than one process id (`sed '{:q;N;s/\n/ /g;t q}' $PROCESS_FILE`) returned by the specified command '$COMMAND'"
+  else
+    error_log "More than one process id (`sed '{:q;N;s/\n/ /g;t q}' $PROCESS_FILE`) in the specified file $PROCESS_FILE is not running."
+    #error_log "More than one process id (`cat $PROCESS_FILE`) in the specified file $PROCESS_FILE is not running."
+  fi
+
+  write_flag_more=2
+fi
+  SET_ERROR=1
+  return
+}
+
+ps_not_running_error()
+{
+
+  #Issue: Multiple process data monitors are running for sear pattern which are not running
+  #Reason:
+  #In this case monitor keeps running but there is no data exchange on socket, means connection remains idle.
+  #And firewall inactivates these idle connections, due to which connection remains active from one side but inactive from another side,
+  #that's why after sending partition switch on these inactive connections, it generates read event, after receiving read event NS go to read data from socket but because cmon does not sends anything so NS got error on read, due to which it closes the connection & add these monitor for recovery.
+  #Connection got close here but process keep running.
+  #Due to this process data monitors where below event is coming gets started after every partition switch. 
+  #Fix: Now taking timestamp, after every 5 minute, cmon will send this event to NS just to keep connection active
+  BEFORE_WRITE_TIMESTAMP=`date '+%s'`
+
+  TIMESTAMP_DIFF=`expr $BEFORE_WRITE_TIMESTAMP - $AFTER_WRITE_TIMESTAMP`
+  if [ $TIMESTAMP_DIFF -gt 300 ]; then #greater than 5 minutes  
+    write_flag_not_run=0
+  fi   
+
+if [ $write_flag_not_run -ne 1 ]; then
+  if [ "X$first_time" = "X1" ]; then
+    echo "0 0 0 0 0 0 0"
+    first_time=0
+  fi
+
+  if [ $search_count -gt 0 ]; then
+    info_log "No process running with the specified search pattern `get_search_pattern_list`"
+  elif [ "XX$COMMAND" != "XX" ]; then
+    info_log "No process id returned by the specified command '$COMMAND'"
+  elif [ "XX$PROCESS_ID_ARG" != "XX" ]; then
+    info_log "Process id ($PROCESS_ID_ARG) specified is not running"
+  else
+    if [ -s $PROCESS_FILE ]; then
+      info_log "Process id (`cat $PROCESS_FILE`) in the specified file $PROCESS_FILE is not running."
+    elif [ -f $PROCESS_FILE ]; then
+      info_log "File $PROCESS_FILE is empty."
+    else
+      info_log "File $PROCESS_FILE does not exist."
+    fi
+  fi
+
+  AFTER_WRITE_TIMESTAMP=`date '+%s'`
+  write_flag_not_run=1
+fi
+  
+  SET_ERROR=1
+  return
+
+}
+
+
+# This method is used for both option:
+#  1. PID is in the file
+#  2. PID is to taken by using search pattern or by running command
+# Input:
+#    File name containing the pid. 
+#    In case of option1, this is filename give as argument.
+#    In case of option2, it is the file created by cmd option or search
+
+chk_process_file()
+{
+  PID_FILE_NAME=$1
+
+  debug_log "chk_process_file() Called. PID_FILE_NAME = $PID_FILE_NAME"
+
+  if [ ! -f $PID_FILE_NAME ]; then
+    ps_not_running_error
+  elif [ "XX$PID_FILE_NAME" != "XX" ];then
+    FILE_WORD_COUNT=`cat $PID_FILE_NAME 2>/dev/null | wc -w`  
+    RET=$?
+
+    if [ $RET -ne 0 -o $FILE_WORD_COUNT -eq 0 ];then
+      ps_not_running_error
+    fi
+    # that is bug in AIX machine
+    #if [ "XX$FILE_WORD_COUNT" != "XX1" ];then
+    #  more_than_one_ps
+    #fi
+
+    if [ $SET_ERROR -ne 1 ];then        # If SET_ERROR is not set in function: ps_not_running_error then only move forward else return
+      if [ $FILE_WORD_COUNT != 1 ];then
+        more_than_one_ps
+      else
+        write_flag_more=0
+      fi
+    else   
+      #write_flag=0
+      return
+    fi
+
+    if [ $SET_ERROR -ne 1 ];then       # If SET_ERROR is not set in function: more_than_one_ps then only move forward else return
+      PROCESS_ID=`cat $PID_FILE_NAME 2>/dev/null`
+      if [ $? != 0 ];then
+        error_log "Unable to get pid from $PID_FILE_NAME file."
+      fi
+    else
+      return
+    fi
+  
+    debug_log "chk_process_file(): PROCESS_ID = $PROCESS_ID from $PID_FILE_NAME file"
+ fi
+}
+
+init_search_data()
+{ 
+  debug_log "Calling set_search_arr()"
+  #Intializing the SEARCH_PATTERN_ARR
+  unset SEARCH_PATTERN_ARR[*]
+  search_count=0
+  set_common_command              #Common command used by both old logic of search pattern and new logic of search pattern
+}
+
+set_ps_file()
+{
+  debug_log "set_ps_file() Called"
+
+  TEMP="cm_ps_data_ex_"$MON_TEST_RUN"_"$VECTOR_NAME""
+  PROCESS_FILE_BY_COMMAND="$CAV_MON_TMP_DIR/$TEMP.pid"
+  >$PROCESS_FILE_BY_COMMAND
+}
+
+set_ps_cmd()
+{
+  debug_log "set_ps_cmd() Called"
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    PS_CMD_FOR_DATA="/usr/bin/ps"
+    if [ ! -f /usr/ucb/ps ];then
+      error_log "ps command not found on path /usr/ucb/ps. Hence standard ps command will be used."
+      PS_CMD_FOR_SEARCH="ps -ef" # Do not use ps -lef as need pid at filed 2
+    else
+      PS_CMD_FOR_SEARCH="/usr/ucb/ps -auxwww"
+    fi
+    if [ ! -f /usr/xpg4/bin/grep ];then
+      error_log "grep command not found on path /usr/xpg4/bin/grep. Hence extended regular expression may not be supported."
+      PS_GREP_CMD="/usr/bin/egrep -e"  #Search for a pattern_list(full regular expression that 
+                                       #begins with a -).
+   else
+     PS_GREP_CMD="/usr/xpg4/bin/grep -E"
+   fi
+  else #Linux,AIX
+    PS_CMD_FOR_DATA="ps"
+    PS_CMD_FOR_SEARCH="ps -ef" # Do not use ps -lef as need pid at filed 2
+    #PS_GREP_CMD="grep -e"
+    PS_GREP_CMD="grep -E"      # Fixed bug: 4574
+  fi
+}
+
+set_common_command()
+{
+  debug_log "set_common_command called"
+  COMMON_COMMAND="grep -v cm_ps_data | grep -v cm_jstat_gc | grep -v cm_java_gc_ex | grep -v cm_ps_thread_stats | grep -v grep"
+  debug_log "set_common_command end"
+}
+
+validate_occurrence_number()
+{
+  debug_log "validate_occurrence_number called" 
+
+  if [ $ORD -lt 1 ]; then
+    error_log_and_exit "Occurrence number cannot be less than 1. Given occurrence number is: $ORD"
+  fi
+
+  #DECIMAL_ORD=`echo $ORD | $AWK_CMD -F'.' '{printf $2" "}'`
+  #elif [ $DECIMAL_ORD -eq 0 -o $DECIMAL_ORD -eq 1 -o $DECIMAL_ORD -eq 2 -o $DECIMAL_ORD -eq 3 -o $DECIMAL_ORD -eq 4 -o $DECIMAL_ORD -eq 5 -o $DECIMAL_ORD -eq 6 -o $DECIMAL_ORD -eq 7 -o $DECIMAL_ORD -eq 8 -o $DECIMAL_ORD -eq 9 ]; then
+  #error_log_and_exit "Occurrence number cannot be in decimal. Given occurrence number is: $ORD"
+
+  debug_log "validate_occurrence_number end"
+}
+
+validate_max_occurence_index()
+{
+  debug_log "validate_max_occurence_index called"
+  if [ $ORD -gt $NUM_OF_PID ]; then
+    error_log "Given occurrence number $ORD is more than number of processes running $NUM_OF_PID"
+  fi
+  debug_log "validate_max_occurence_index end"
+}
+
+# Creating array of PIDs having same search pattern.
+#Example:
+#       ps -lef | egrep post
+#	0 S postgres  6328     1  0  80   0 - 53396 poll_s 10:53 ?        00:00:02 /usr/bin/postmaster -p 5432 -D /var/lib/pgsql/data
+#	1 S postgres  6333  6328  0  80   0 - 44149 poll_s 10:53 ?        00:00:00 postgres: logger process
+#	1 S postgres  6335  6328  0  80   0 - 53429 poll_s 10:53 ?        00:00:01 postgres: writer process
+#	1 S postgres  6336  6328  0  80   0 - 53396 poll_s 10:53 ?        00:00:01 postgres: wal writer process
+#	1 S postgres  6337  6328  0  80   0 - 53573 poll_s 10:53 ?        00:00:00 postgres: autovacuum launcher process
+#	1 S postgres  6338  6328  0  80   0 - 44315 poll_s 10:53 ?        00:00:00 postgres: stats collector process
+#	0 S netstorm 30795 17856  0  80   0 - 25279 pipe_w 12:08 pts/13   00:00:00 egrep post
+#
+#Here array_of_pid is: 6328 6333 6335 6336 6337 6338
+
+# This is used with options -s search pattern and -O ORD.
+create_array_of_pid()
+{
+  debug_log "create_array_of_pid called"
+  i=0
+  MULTIPLE_SEARCH_CMD=""
+  while [ $i -lt $search_count ]
+  do
+   MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  ${SEARCH_PATTERN_ARR[$i]} "`
+
+    i=`expr $i + 1`
+  done
+
+  #eval is required since we have to run this command later
+  SET_COMMAND="eval $PS_CMD_FOR_SEARCH $MULTIPLE_SEARCH_CMD | $COMMON_COMMAND"
+  
+  #Creating ARRAY_OF_PID and SORTED_ARRAY_OF_PID using for loop because, AIX ex, AIX and Solaris does not support brackets i.e. ()
+  COMMAND_VAL=`$SET_COMMAND | $AWK_CMD -F' ' '{printf $2" "}'`             #COMMAND_VAL contains all the pids from given search pattern
+  #Added this on September 01, 2012 by Prachi
+  j=0
+  for index in `echo $COMMAND_VAL`
+  do
+    ARRAY_OF_PID[$j]=$index
+    j=`expr $j + 1`
+  done
+
+  SORT_COMMAND=`echo ${ARRAY_OF_PID[@]} | tr " " "\n" | sort`      #SORT_COMMAND contains all the sorted pids from given search pattern
+  k=0
+  for idx in `echo $SORT_COMMAND`
+  do
+    SORTED_ARRAY_OF_PID[$k]=$idx
+    k=`expr $k + 1`
+  done
+
+  NUM_OF_PID=${#SORTED_ARRAY_OF_PID[@]}
+
+  debug_log "SORTED_ARRAY_OF_PID = ${SORTED_ARRAY_OF_PID[@]} and NUM_OF_PID = $NUM_OF_PID"
+  
+  debug_log "create_array_of_pid end"  
+}
+
+set_command_for_search()
+{
+  debug_log "Calling method set_command_for_search()"
+  #Search the pattern and set the COMMAND variable that is used in create_pid_file_by_cmd()
+  # Limitation - If two process match, it will give first process id
+
+  # We need to filter all other monitors also as they may be also 
+  # searching with same pattern - Changed this on May 18, 2010 by Neeraj
+  # Note  - Do not use grep -v "cm_ps_data|cm_jstat_gc|cm_java_gc_ex|grep" as it did not work
+
+  #STATIC_COMMAND="grep -v cm_ps_data | grep -v cm_jstat_gc | grep -v cm_java_gc_ex | grep -v grep | $AWK_CMD '{print \$2}'"
+  STATIC_COMMAND="$COMMON_COMMAND | $AWK_CMD '{print \$2}'"
+  i=0
+  MULTIPLE_SEARCH_CMD=""
+  while [ $i -lt $search_count ] 
+  do
+    #MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | grep -e \"${SEARCH_PATTERN_ARR[$i]}\" "`
+    #MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  \"${SEARCH_PATTERN_ARR[$i]}\" "`
+    MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  ${SEARCH_PATTERN_ARR[$i]} "`
+    i=`expr $i + 1`
+  done
+  #eval is required since we have to run this command later 
+  COMMAND="eval $PS_CMD_FOR_SEARCH $MULTIPLE_SEARCH_CMD | $STATIC_COMMAND"
+  debug_log "Value of COMMAND in set_command_for_search() method = $COMMAND"
+}
+
+set_debug_log_file()
+{
+if [ "XX$CAV_MON_HOME" != "XX" ];then
+  DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_ps_data_ex_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+  ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_ps_data_ex_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+else
+  DEBUG_LOG_FILE="/tmp/cm_ps_data_ex_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+  ERROR_LOG_FILE="/tmp/cm_ps_data_ex_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  debug_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+fi
+}
+
+calc_final_ps_data()
+{
+  debug_log "show_ps_data function called."
+
+  if [ "X$RET" != "X0" ];then
+      ps_not_running_error
+      return
+  else
+    write_flag_not_run=0    
+  fi
+
+  set $CMD_OUTPUT
+  Elapsed_Time="$1"
+  Time="$2"
+  VIRTUAL_PROCESS_SIZE="$3"
+  RESIDENT_SET_SIZE="$4"
+
+  ELAPSED_TIME=`get_time_in_sec_with_days $Elapsed_Time`
+  TIME=`get_time_in_sec_with_days $Time`
+
+  if [ $BC_AVAILABLE -eq 1 ];then
+    MEM_DIFF=`echo " scale=2; $RESIDENT_SET_SIZE / $TOTAL_MEM" | bc`
+  else
+    MEM_DIFF=`$AWK_CMD -v "var1=$RESIDENT_SET_SIZE" -v "var2=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 / var2)}'` 
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    MEMORY_USED=`echo " scale=2; $MEM_DIFF * 100" | bc `
+  else
+    MEMORY_USED=`$AWK_CMD -v "var1=$MEM_DIFF" 'BEGIN{printf "%.2f", (var1 * 100)}'`
+  fi
+
+  #If process restart by any reson theb we will get current cpu time less than previous cpu time
+  debug_log "Current cpu time = $TIME, previous cpu time = $PREV_CPU_TIME"
+  if [ $BC_AVAILABLE -eq 1 ];then
+    RET=$(echo "$TIME < $PREV_CPU_TIME" | bc -l)
+  else
+    RET=$($AWK_CMD -v "var1=$TIME" -v "var2=$PREV_CPU_TIME" 'BEGIN{flag=var1<var2; printf "%d", flag}')
+  fi
+  if (( $RET ));then
+    PREV_CPU_TIME=$TIME
+  else
+    if [ $PREV_CPU_TIME -eq 0 ]; then
+      PREV_CPU_TIME=$TIME 
+      CPU_TIME_PER=0
+      return
+    fi
+    CPU_TIME_DIFF=`expr $TIME - $PREV_CPU_TIME`
+    if [ $BC_AVAILABLE -eq 1 ];then
+      CPU_DIFF=`echo " scale = 2; $CPU_TIME_DIFF * 100" | bc`
+    else
+      CPU_DIFF=`$AWK_CMD -v "var1=$CPU_TIME_DIFF" 'BEGIN{printf "%.2f", (var1 * 100)}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      CPU_TIME_PER=`echo " scale=2; $CPU_DIFF / $INTERVAL_SECS " | bc`
+    else
+      CPU_TIME_PER=`$AWK_CMD -v "var1=$CPU_DIFF" -v "var2=$INTERVAL_SECS" 'BEGIN{printf "%.2f", (var1/var2)}'`
+    fi
+  fi
+
+ debug_log "ELAPSED_TIME=$Elapsed_Time TIME=$Time VIRTUAL_PROCESS_SIZE=$VIRTUAL_PROCESS_SIZE RESIDENT_SET_SIZE=$RESIDENT_SET_SIZE CPU_TIME_PER=$CPU_TIME_PER MEMORY_USED=$MEMORY_USED NUMBER_OF_THREADS=$NUMBER_OF_THREADS"
+
+  #echo $ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE $CPU_TIME_PER $MEMORY_USED "0" $NUMBER_OF_THREADS
+  #debug_log "cm_ps_data o/p = '$ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE'"
+
+  #PREV_CPU_TIME=$TIME
+}
+
+show_ps_data()
+{
+  if [ $SET_ERROR -ne 1 ]; then
+    echo $ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE $CPU_TIME_PER $MEMORY_USED $NUMBER_OF_THREADS
+    debug_log "cm_ps_data o/p = '$ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE'"
+    first_time=1
+  fi
+
+  PREV_CPU_TIME=$TIME
+}
+
+# This find the process ID based on following arguments given to the monitor.
+# 1. -s <search pattern>
+# 2. -c <command>
+# 3. -f <file>
+# In case of option (-p), this function will do nothing.
+get_ps_id()
+{ 
+  debug_log "get_ps_id function called."
+
+  SET_ERROR=0                                # Make it zero in the beginning for every execution, because we are using this variable in order to do return(return -1) fr                                               om any function.
+  FILE_WORD_COUNT=0                          # Total number of PIDs in /tmp/cm_ps_data_ex__.pid. Make it zero in the beginning for every execution.
+
+  # For -s option
+  if [ $search_count -gt 0 ]; then 
+    if [ "XX$ORD" = "XX" ]; then            # Old logic (means without ORD) will continue
+      set_command_for_search                 # Set COMMAND
+      set_ps_file                            # Set temporary file for PID in /tmp/ directory
+    else                           
+      validate_occurrence_number             # If ORD is given then new logic will execute
+      create_array_of_pid          
+      validate_max_occurence_index
+    fi
+  fi
+ 
+  # Using -f i.e. PID_FROM_FILE_OPTION (not PROCESS_FILE) as PROCESS_FILE variable get used for command also. 
+  if [ $PID_FROM_FILE_OPTION -eq 1 ]; then
+    chk_process_file  $PROCESS_FILE
+  # This is used for both (-s) search pattern and (-c) command.
+  elif [ "XX$COMMAND" != "XX" ];then
+    PROCESS_FILE="$PROCESS_FILE_BY_COMMAND"
+    create_pid_file_by_cmd
+  fi
+
+  if [ $SET_ERROR -eq 1 ];then
+    debug_log "Error: Either more than one process running or no process running."
+    return
+  fi
+
+  # This is used when (-s) search pattern is given with (-O) ORD.
+  if [ "X$ORD" != "X" ]; then
+    SET_ORD=`expr $ORD - 1`                       # -1 because array index starts from zero
+    PROCESS_ID=${SORTED_ARRAY_OF_PID[$SET_ORD]}   # PID from SORTED_ARRAY_OF_PID created in function create_array_of_pid()
+    debug_log "Generated PID is $PROCESS_ID"
+  fi
+}
+
+get_and_show_ps_data()
+{
+  debug_log "get_and_show_ps_data function called."
+
+  if [ "X$PROCESS_ID" != "X" ]; then #Check if process id is set or not
+    get_ps_data $PROCESS_ID
+    if [ $? -eq 0 ]; then
+      show_ps_data
+    fi
+  fi
+}
+
+#Run one (Added in 3.8.5 release)
+run_once()
+{
+  debug_log "run_once function called."
+  get_ps_data $PROCESS_ID
+
+  # Why we sleeping on start? 
+  #lib_sleep $INTERVAL_SECS                 #Because first sample comes after freq 
+  while true
+  do
+    # Test is over. So exit with success status
+    isTestOver $MON_TEST_RUN
+    if [ $? -eq 1 ]; then 
+      exit 0
+    fi
+          
+    #Check if process id is still set. If not, get process Id again
+    debug_log "Rechecking process id have set or not? PROCESS_ID = $PROCESS_ID"
+    if [ "X$PROCESS_ID" = "X" ]; then
+      get_ps_id
+    fi
+
+    #Check if process id still not set
+    if [ "X$PROCESS_ID" != "X" ]; then 
+      debug_log "PROCESS_ID = $PROCESS_ID: monitoring"
+      # Check if process is running or not
+      # Since process will be running with different user, we cannot use kill -0 to check as it gives error, so using ps -p
+      #kill -0 $PROCESS_ID >/dev/null 2>&1
+      ps -p $PROCESS_ID >/dev/null 2>&1
+      if [ $? -ne 0 ];then
+        debug_log "inside if..process is not running"
+        get_ps_id
+        get_and_show_ps_data
+      else
+        debug_log " else part"
+        get_and_show_ps_data
+      fi
+    fi
+
+    lib_sleep $INTERVAL_SECS 
+    debug_log "end of loop... PROCESS_ID = $PROCESS_ID after sleep."
+  done
+
+  debug_log "PROCESS_ID = $PROCESS_ID after while loop"
+}
+
+
+###########################################################################################################################################
+
+if [ $# -eq 0 ];then
+ display_help_and_exit
+fi
+
+
+#Must set debug log file in the beginning
+set_debug_log_file
+
+# Set the COMMAND variable (Must be done before parsing options)
+
+set_ps_cmd
+
+init_search_data
+
+while getopts p:f:c:s:O:i:D? arg
+do
+  case $arg in
+    p) PROCESS_ID_ARG="$OPTARG"
+       PROCESS_ID=$PROCESS_ID_ARG
+       FLAG=`expr $FLAG + 1`;;
+    f) PROCESS_FILE="$OPTARG"
+       PID_FROM_FILE_OPTION=1
+       FLAG=`expr $FLAG + 1`;;
+    c) COMMAND="$OPTARG"
+       set_ps_file
+       FLAG=`expr $FLAG + 1`;;
+    s) SEARCH_PATTERN_ARR[search_count]="$OPTARG"
+       if [ $search_count = 0 ];then
+         FLAG=`expr $FLAG + 1`  
+       fi 
+       search_count=`expr $search_count + 1`;;
+    O) ORD="$OPTARG";;                                  #PID occurence number.   Added this on July 30, 2012 by Prachi
+    i) INTERVAL_SECS="$OPTARG";;                             #INTERVAL_SECS in secs
+    D) DEBUG=1;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ $FLAG -gt 1 ];then
+  echo "Only one of the options -p, -f , -c and -s  can be given at a time !"
+  exit 1
+fi
+
+
+if [ "XX$ORD" != "XX" ]; then
+  if [ "XX$PROCESS_ID_ARG" != "XX" -o "XX$PROCESS_FILE" != "XX" -o "XX$COMMAND" != "XX" ]; then
+    echo "-O option is applicable only with -s option"
+    exit 1
+  fi
+fi
+
+if [ "XX$MON_OPTION" = "XX" ]; then
+   MON_OPTION=2
+fi
+
+get_ps_id
+
+# Since we are removing top command so we no need to nsi_kill_moniotr
+#Note: Added 1>/dev/null because echo from nsi_kill_child_of_monitors was coming on console of running monitor.
+#if [ $search_count -eq 0 -a "X$COMMAND" = "X" ]; then
+#  nohup nsi_kill_child_of_monitors -p $PID -i 10 -f $TOP_OUT_FILE 1>/dev/null 2>&1 & 
+#else
+#  # Commented pid file removal as we need it in lib_kill_process for exception list
+#  #nohup nsi_kill_child_of_monitors -p $PID -i 10 -f "$TOP_OUT_FILE $PROCESS_FILE_BY_COMMAND" 1>/dev/null 2>/dev/null& 
+#  nohup nsi_kill_child_of_monitors -p $PID -i 10 -f $TOP_OUT_FILE 1>/dev/null 2>&1 & 
+#fi
+
+debug_log "MON_OPTION is: $MON_OPTION"
+
+#Run once
+if [ "X$MON_OPTION" = "X2" ]; then
+  run_once
+else
+  error_log_and_exit "Invalid MON_OPTION=$MON_OPTION. Valid MON_OPTION is 2."  
+fi
+
+#Not removing as with -c option this file will be read if exists.
+#rm -f $PROCESS_FILE_BY_COMMAND
+
+# We need to clean old files if any make mtime +1 [older than 1 days files are removed]
+# New files always generated whenever the scenario test will run
+#
+#
+#find /tmp -name "cm_ps_data_ex_*.pid" -type f -mtime +1 -exec rm -f {} \;  >/dev/null 2>&1
+
+exit 0

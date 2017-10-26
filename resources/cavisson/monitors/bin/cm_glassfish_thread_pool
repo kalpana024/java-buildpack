@@ -1,0 +1,177 @@
+##########################
+# Name  : cm_glassfish_thread_pool
+# Usage :
+# Output :
+##########################
+DEBUG_LEVEL=0
+PID="$$"
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+
+INTERVAL_SECS=$MON_FREQUENCY
+
+THREAD_POOL_OUT_FILE=/tmp/thread_pool.out
+
+set_error_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_glassfish_thread_pool_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_glassfish_thread_pool_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  else
+    DEBUG_LOG_FILE="/tmp/cm_glassfish_thread_pool_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="/tmp/cm_glassfish_thread_pool_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+set_error_log_file
+
+debug_log()
+{
+  if [ "X$DEBUG_LEVEL" = "X0" ]; then
+    return
+  else
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+error_log()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+}
+
+error_log_and_exit()
+{
+  error_log "$*"
+  exit -1
+}
+
+Usage()
+{
+  error_log "$*"
+
+  error_log "Usage: cm_glassfish_thread_pool --cmd_path <cnd path> --user <UserName> --passwordfile <password file> --port <port> --type <type> --interval <interval in sec(default 10 sec)>"
+
+  exit -1
+}
+
+chk_args_of_option()
+{
+  if [ "X$2" == "X" ];then
+    echo "Option $1 required a value."
+    Usage
+    exit -1
+  fi
+}
+
+get_and_show_data()
+{
+  debug_log "get_and_show_data() called"
+  #NOTE: Known issue
+  #running asadmin in background and not killing this process after monitor stops.
+  #server control is not available hence not handling this rght nw
+  
+  $CMD_PATH/asadmin monitor --user $USER --passwordfile $PASSWORD_FILE --port $PORT --interval $INTERVAL_SECS --type $TYPE > $THREAD_POOL_OUT_FILE &
+  nohup $UNIX_SHELL $CAV_MON_HOME/bin/nsi_kill_child_of_monitors -p $PID -i 10 -f $THREAD_POOL_OUT_FILE 2>/dev/null&
+  lib_sleep `expr $INTERVAL_SECS + 1`
+
+  #/opt/petstore/glassfishv3/bin/asadmin -u admin -W /opt/petstore/glassfishv3/bin/passwd get --monitor=true 'server.network.http-listener-1.thread-pool.*'
+  #/sharedvol-review/marketlive5/libraries/b2c/glassfish-v2.1-b60e/bin/asadmin monitor --user admin --passwordfile /tmp/passwd --port 4802 --type threadpool server
+  #$CMD_PATH/asadmin monitor --user $USER --passwordfile $PASSWORD_FILE --port $PORT --type $CMD
+  #$CMD_PATH/asadmin -u $USER -W $PASSWORD_FILE get --monitor=true ${CMD}* | grep "count =" | awk -F"=" '{printf $2}'
+  #echo ""
+
+  while true
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then 
+      killid=`/usr/ucb/ps -auxwww|grep -w "asadmin" | grep -v grep | head -1 | awk -F' ' '{print $2}'`
+      lib_kill_process_using_pid "$killid"
+      exit 0
+    fi
+
+    #output=`tail -1 $THREAD_POOL_OUT_FILE`
+    #low=`echo $output | awk -F" " '{printf $1}'`
+    #high=`echo $output | awk -F" " '{printf $2}'`
+    #sum=`expr $low + $high`
+    #AvgTimeInQueue=`echo " scale=3; $sum / 2" | bc`
+
+    #low=`echo $output | awk -F" " '{printf $4}'`
+    #high=`echo $output | awk -F" " '{printf $5}'`
+    #sum=`expr $low + $high`
+    #AvgWorkCompTime=`echo " scale=3; $sum / 2" | bc`
+
+    tail -1 $THREAD_POOL_OUT_FILE | awk '{printf $3" "$6" "$13" "$11" "$12" "$3" "$14"\n"}'
+
+    #echo $AvgTimeInQueue $AvgWorkCompTime `echo $output | awk -F" " '{printf $13" "$11" "$12" "$3" "$14"\n"}'` 
+    lib_sleep $INTERVAL_SECS 
+
+  done
+ exit 0       
+}
+
+if [ "X$1" == "X" ];then
+  Usage
+fi
+
+while [ "$1" != "" ];do
+  debug_log "ARGS=$1"
+  case $1 in
+    "--user")
+        shift
+	chk_args_of_option "--user" "$1"
+        USER=$1;;
+    "--passwordfile")
+        shift
+	chk_args_of_option "--passwordfile" "$1"
+        PASSWORD_FILE=$1;;
+    "--interval")
+        shift
+	chk_args_of_option "--interval" "$1"
+        INTERVAL_SECS=$1;;
+    "--type")
+        shift
+	chk_args_of_option "--type" "$1"
+        TYPE=$1;;
+    "--cmd_path")
+        shift
+	chk_args_of_option "--cmd_path" "$1"
+        CMD_PATH=$1;;
+    "--port")
+        shift
+	chk_args_of_option "--port" "$1"
+        PORT=$1;;
+    --*) Usage "Invalid option";;
+    *) Usage;;
+  esac
+  shift
+done
+
+#cm_glassfish_thread_pool --user admin -W /opt/petstore/glassfishv3/bin/passwd get --monitor=true 'server.network.http-listener-1.thread-pool.*'
+
+#--user -> Default is admin
+#--passwordfile
+#--thread_pool server.network.http-listener-1.thread-pool
+#-i in sec default is 10
+
+#nohup nsi_kill_child_of_monitors -p $PID -i 10 -f $ 1>/dev/null 2>/dev/null
+
+get_and_show_data
+
+exit 0       

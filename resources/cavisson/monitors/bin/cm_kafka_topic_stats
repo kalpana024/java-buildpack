@@ -1,0 +1,143 @@
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+INTERVAL_SECS=$MON_FREQUENCY
+VECTOR_FLAG="0"
+VECTOR_PREFIX=""
+SAMPLE_NUMBER=0
+E_O_NUM=0
+
+
+#SAMPLE_DATA
+#10.204.69.205
+#of_orders:2:901207
+#of_orders:1:898825
+#of_orders:0:2461559 
+
+show_data()
+{
+  for(( i=0; i<${#SERVER_ARRAY[@]}; i++ ))
+  do
+   
+    for(( k=0; k<${#TOPIC_ARRAY[@]}; k++ ))
+    do
+      if [ "X${TOPIC_ARRAY[$k]}" = "Xof_orders" -o "X${TOPIC_ARRAY[$k]}" = "Xof_shipments" ]; then
+        cmd_to_run="$path_of_kafka_shell/kafka-run-class.sh kafka.tools.GetOffsetShell --broker-list ${SERVER_ARRAY[$i]}:${PORT_ARRAY[$i]} --topic ${TOPIC_ARRAY[$k]} --time -1"
+      else
+        ns_log_event "Critical" "Wrong Topic (${TOPIC_ARRAY[$k]}) provided so ignoring that topic"
+        continue
+      fi
+
+      data_line=(`$cmd_to_run 2>/dev/null`)
+      if [ $? -ne 0 ]; then
+        ns_log_event "Critical" "Error in running command. Command = ($cmd_to_run)."
+        continue
+      fi
+     
+      j=0
+      while [ $j -lt ${#data_line[@]} ]
+      do
+        topic=`echo ${data_line[$j]} | cut -d':' -f 1`
+        partition=`echo ${data_line[$j]} | cut -d':' -f 2`
+        total_msg=`echo ${data_line[$j]} | cut -d':' -f 3`
+ 
+        echo $VECTOR_PREFIX""${SERVER_ARRAY[$i]}""$MON_VECTOR_SEPARATOR""$topic"_"$partition"|"$total_msg
+      
+        j=`expr $j + 1` 
+      done
+    done
+  done
+}
+
+display_help_and_exit()
+{
+  echo "$*"
+  echo "Usage:"
+  echo "-s: Mandatory field. We can provide the hosts from which kafka will fetch the data. Multiple hosts are supported. Hosts can be passed with their port. Eg. 10.202.69.205:6667,10.202.69.207,10.202.69.206:7800. If port is not passed with the host, we take 6667 as the default port and fetch data."
+  echo "-p: Mandatory field. We have to pass the path where the kafka program is stored. Eg. /opt/kafka_2.0.0.11.0/bin/. This complete path has to be given."
+  echo "-t: Mandatory field. We need to give the topic whose data is to be fetched. Eg. of_orders,of_shipment. Wer can pass mnultiple topics but has to comma seperated."
+  echo "-i: Optional field. Interval in seconds."
+  echo "-X: Optional_field. Vector prefix."
+  echo "-L: Optional field. We can pass 'header' or 'data'. If 'header' is passed then vector will be brought. Else data."
+  exit -1
+}
+
+while getopts i:X:L:p:s:t:? arg
+do
+  case $arg in
+    X) export VECTOR_PREFIX=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ]; then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    i) INTERVAL_SECS=$OPTARG
+       freq_option="1"
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         display_help_and_exit "Integer expression must required with -i option!"
+       fi
+       ;;
+    s) server_list=$OPTARG ;;
+
+    t) topic_list=$OPTARG  ;;
+
+    p) path_of_kafka_shell=$OPTARG  ;;
+
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ "X$server_list" = "X" ]; then
+  display_help_and_exit "Please provide server"
+else
+  SERVER_PORT=(`echo $server_list | tr ',' ' '`)
+  for (( i=0; i<${#SERVER_PORT[@]}; i++ ))
+  do
+    SERVER_ARRAY[$i]=`echo ${SERVER_PORT[$i]} | awk -F':' '{print $1}'`
+    PORT_ARRAY[$i]=`echo ${SERVER_PORT[$i]} | awk -F':' '{print $2}'`
+    if [ "X${PORT_ARRAY[$i]}" = "X" ]; then
+      PORT_ARRAY[$i]=6667
+    fi
+  done
+fi
+
+if [ "X$topic_list" = "X" ]; then
+  display_help_and_exit "Topic of whose data to be brought is a mandatory field"
+else
+  TOPIC_ARRAY=(`echo $topic_list | tr ',' ' '`)
+fi
+
+if [ "X$path_of_kafka_shell" = "X" ]; then
+  display_help_and_exit "please provide a valid path." 
+else
+  ls -ltr $path_of_kafka_shell/kafka-run-class.sh  2>/dev/null 1>&2
+  if [ $? -ne 0 ]; then
+    display_help_and_exit "Kafka program is not present on provided path. please provide a valid path"
+  fi 
+fi
+
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from iostat command
+  echo "Warning: No vectors."
+else #To get data on every specified interval
+  while : 
+  do
+    sleep $INTERVAL_SECS
+    show_data
+  done
+fi
+
+exit 0

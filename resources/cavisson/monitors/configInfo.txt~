@@ -1,0 +1,83 @@
+ndmain/pom.xml
+-----------------------------------
+<dependency>
+    <groupId>gnu.getopt</groupId>
+    <artifactId>java-getopt</artifactId>
+    <version>1.0.13</version>
+</dependency>
+<dependency>
+    <groupId>net.iharder</groupId>
+    <artifactId>base64</artifactId>
+    <version>2.3.9</version>
+</dependency>
+<dependency>
+    <groupId>cmonLib</groupId>
+    <artifactId>cavisson-monitor-lib</artifactId>
+    <version>0.1</version>
+</dependency>
+<dependency>
+    <groupId>cmonAgent</groupId>
+    <artifactId>cavisson-monitor-agent</artifactId>
+    <version>0.1</version>
+</dependency>
+-----------------------------------------
+
+distribution/pom.xml
+-----------------------------------------
+	<dependency>
+                <groupId>cmonLib</groupId>
+                <artifactId>cavisson-monitor-lib</artifactId>
+                <version>0.1</version>
+        </dependency>
+        <dependency>
+                <groupId>cmonAgent</groupId>
+                <artifactId>cavisson-monitor-agent</artifactId>
+                <version>0.1</version>
+        </dependency>
+------------------------------------------
+
+
+
+
+
+    mvn install:install-file -Dfile=<path-to-file> -DgroupId=<group-id> \
+        -DartifactId=<artifact-id> -Dversion=<version> -Dpackaging=<packaging>
+
+mvn install:install-file -Dfile=/home/netstorm/standaloneCmon/lib/CmonLib.jar -DgroupId=cmonLib -DartifactId=cavisson-monitor-lib -Dversion=0.1 -Dpackaging=jar
+
+mvn install:install-file -Dfile=/home/netstorm/standaloneCmon/bin/CavMonAgent.jar -DgroupId=cmonAgent -DartifactId=cavisson-monitor-agent -Dversion=0.1 -Dpackaging=jar
+
+
+
+Startup for standalone
+==========================================================
+root@netstorm-Vostro-2520:/home/netstorm/standaloneCmon# javac -cp lib/base64.jar:cmon_client_utils.jar:CmonLib.jar:java-getopt-1.0.9.jar:. CavmonAgentStarter.java
+
+
+
+----------------------------------------------------
+Alternative approach to start cmon is to load ndAgentJar
+-----------------------------------------------------
+Class - NDMain.java
+----------------------------------------------------
+import java.lang.reflect.Method;
+Line#148
+
+      try
+      {
+        Class cmonStarterClass = cl.loadClass("com.cavisson.monitor.agent.CavmonAgentStarter");
+        Method cmonStarterMethod = cmonStarterClass.getMethod("startCavMonAgentServer", new Class[]{});
+        cmonStarterMethod.invoke(null, (Object[])null);
+      }
+      catch(Exception ex)
+      {
+        System.out.println("Unable to start cavisson monitor agent due to exception -");
+        ex.printStackTrace();
+      }
+
+
+
+
+
+
+

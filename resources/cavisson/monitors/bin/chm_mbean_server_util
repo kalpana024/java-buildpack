@@ -1,0 +1,206 @@
+#################################################################################################
+# Name  : chm_mbean_server_util 
+# Usage : chm_mbean_server_util -h <host-name> -p <port> -U <spring_user> -P <spring_password> -o <dumpheap|performgc|dumpthreads> -D <for debug, optional>
+# Purpose: This shell outputs dumpheap performgc and dumpthreads into testrun directory 
+#
+#CHECK_MONITOR NS116 PeformGC116 2 NA 2 NA NA NA chm_mbean_server_util+-h+192.168.1.116+-p+6969+-U+admin+-P+springsource+-o+performgc
+#
+#CHECK_MONITOR NS116 DumpThreads116 2 NA 2 NA NA NA chm_mbean_server_util+-h+192.168.1.116+-p+6969+-U+admin+-P+springsource+-o+dumpthreads
+#
+#CHECK_MONITOR NS116 DumpHeap116 2 NA 2 NA NA NA chm_mbean_server_util+-h+192.168.1.116+-p+6969+-U+admin+-P+springsource+-o+dumpheap
+# Output : 
+#         Output Files mbean_heap.log.<process id>, mbean_gc.log.<process id> and mbean_thread.log.<process id> are created inside test run directory 
+#
+# Initial version : Thursday, June 28 2012
+# Modification    : 
+# Author Name     : Ankur Srivastava 
+#################################################################################################
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+DEBUG_LEVEL=0
+error_log_and_exit()
+{
+  error_log "$*"
+  ns_check_mon_fail_and_exit  
+}
+
+error_log()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+}
+
+debug_log()
+{
+  if [ "X$DEBUG_LEVEL" = "X0" ]; then
+    return
+  else
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+set_up_log_files()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/chm_mbean_server_"$MON_TEST_RUN"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/chm_mbean_server_"$MON_TEST_RUN"_error.log"
+  else
+    DEBUG_LOG_FILE="/tmp/chm_mbean_server_"$MON_TEST_RUN"_debug.log"
+    ERROR_LOG_FILE="/tmp/chm_mbean_server_"$MON_TEST_RUN"_error.log"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+set_up_env() 
+{
+  EXIT_STATUS=PASS
+  JAVA_CLASS=cm_mbean_server_stats
+  HEAP_LOG_FILE=/tmp/mbean_heap.log.$$ 
+  GC_LOG_FILE=/tmp/mbean_gc.log.$$
+  THREAD_LOG_FILE=/tmp/mbean_thread.log.$$
+ 
+  check_and_set_ftp_var
+#Setting up CLASSPATH of CmonLib.jar, java-getopt-1.0.9.jar
+  cpath=".:$CAV_MON_HOME/lib/CmonLib.jar:$CAV_MON_HOME/lib/java-getopt-1.0.9.jar:$CAV_MON_HOME/bin:."
+}
+
+#To check and enable FTP to NS machine. 
+#FTP will only be done if shell is called from TR, else data will be printed to console
+check_and_set_ftp_var() 
+{
+  if [ "XX$MON_TEST_RUN" = "XX" ]; then 
+   export FTP="FALSE"
+  else
+   export FTP="TRUE"
+  fi 
+}
+
+Usage()
+{
+  error_log_and_exit "Major" "Incorrect arguments. Usage is $0 -h <host-name> -p <port> -U <spring_user> -P <spring_password> -o <dumpheap|performgc|dumpthreads>"
+}
+
+run() 
+{ 
+  OP=$1
+  debug_log "Operation=$OP"
+  case "$OP" in 
+    dumpheap) 
+      run_java_command -H >$HEAP_LOG_FILE 2>&1
+      if [ $DEBUG_LEVEL -ge 0 ] ;then 
+        debug_log `cat $HEAP_LOG_FILE`
+      fi 
+      dumpFileWithPath=`cat $HEAP_LOG_FILE|awk -F"'" '{print $2}'`
+      debug_log "Heapdump file = $dumpFileWithPath"
+      dumpFile=`basename $dumpFileWithPath`
+      if [ "XX$FTP" = "XXTRUE" ]; then
+        ftp_file $dumpFileWithPath $dumpFile
+        rm -f $dumpFileWithPath
+      fi
+      ;; 
+
+    dumpthreads)  
+      run_java_command -T >$THREAD_LOG_FILE 2>&1
+      if [ $DEBUG_LEVEL -ge 0 ] ;then
+        debug_log `cat $THREAD_LOG_FILE`
+      fi
+      if [ "XX$FTP" = "XXTRUE" ]; then
+        ftp_file $THREAD_LOG_FILE dumpThread.log.$$
+      fi
+      ;;
+
+    performgc)
+       run_java_command -G >$GC_LOG_FILE 2>&1
+       if [ $DEBUG_LEVEL -ge 0 ] ;then
+        debug_log `cat $GC_LOG_FILE`
+       fi 
+       if [ "XX$FTP" = "XXTRUE" ]; then
+         ftp_file $GC_LOG_FILE gc.log.$$
+       fi
+      ;;
+
+    *) 
+      error_log_and_exit "Critical" "Invalid Operation"
+    ;;
+  esac 
+}
+
+run_java_command() 
+{ 
+   debug_log "Going to run command=java -cp $cpath $JAVA_CLASS -h $SPRING_HOST -p $SPRING_PORT -U $SPRING_USER -P $SPRING_PASS $1 true"
+   java -cp $cpath $JAVA_CLASS -h $SPRING_HOST -p $SPRING_PORT -U $SPRING_USER -P $SPRING_PASS $1 true 
+   if [ $? != 0 ];then
+     error_log "Critical" "Unable to perform $OPERATION" 
+     EXIT_STATUS=FAIL 
+   fi
+}
+
+ftp_file() 
+{
+  debug_log "Going to run commmand=ns_ftp_file $1 $2" 
+  ns_ftp_file $1 $2
+  if [ $? != 0 ];then
+    error_log "Critical" "Unable to FTP $LOG_FILE to NS Machine"
+    EXIT_STATUS=FAIL
+  fi
+} 
+
+clean() 
+{
+  rm -f $HEAP_LOG_FILE $THREAD_LOG_FILE $GC_LOG_FILE 
+}
+
+check_and_exit() 
+{
+  if [ "XX$EXIT_STATUS" = "XXPASS" ]; then
+    ns_check_mon_pass_and_exit
+  else
+    error_log_and_exit "Critical" "Check Monitor Failed"
+  fi 
+}
+
+set_up_log_files
+while getopts h:p:U:P:o:D:? args
+do 
+  case $args in
+   h) SPRING_HOST=$OPTARG
+      ;; 
+   p) SPRING_PORT=$OPTARG
+      ;;
+   U) SPRING_USER=$OPTARG
+      ;;
+   P) SPRING_PASS=$OPTARG 
+      ;;
+   o) OPERATION=$OPTARG 
+      ;; 
+   D) DEBUG_LEVEL=$OPTARG
+      ;;  
+   *) Usage ;;
+   ?) Usage ;; 
+  esac 
+done 
+
+if [ "XX$SPRING_HOST" = "XX" -o "XX$SPRING_PORT" = "XX" -o "XX$SPRING_USER" = "XX" -o "XX$SPRING_PASS" = "XX" -o "XX$OPERATION" = "XX" ]; then
+   Usage
+fi 
+
+
+debug_log "CAV_MON_HOME=$CAV_MON_HOME, MON_TEST_RUN=$MON_TEST_RUN"
+debug_log "Check Monitor started"
+set_up_env 
+run $OPERATION 
+clean
+check_and_exit  

@@ -1,0 +1,269 @@
+#######################################################################################
+# Name  : cm_weblogic_jdbc_stats
+# Purpose : This shell outputs the Weblogic JDBC POLL
+# Author Name : Shri Chandra 
+#
+#Java Command:
+#cmd: java weblogic.Admin -username <username> -password <password> -pretty GET -mbean <mbean name>
+#
+#Mbean name is in the following format:
+#"<domain name>:Location=<server name>,Name=<connection pool name>,ServerRuntime=<server name>,Type=JDBCConnectionPoolRuntime"
+#For example:
+#"mydomain:Location=myserver,Name=PTAGIS3_Blueback,ServerRuntime=myserver,Type=JDBCConnectionPoolRuntime"
+#
+#Output of this command is:
+#        ActiveConnectionsAverageCount: 0
+#        ActiveConnectionsCurrentCount: 0
+#        ActiveConnectionsHighCount: 0
+#        CachingDisabled: true
+#        ConnectionDelayTime: 577
+#        ConnectionLeakProfileCount: 0
+#        ConnectionsTotalCount: 1
+#        CurrCapacity: 1
+#        Enabled: true
+#        FailuresToReconnectCount: 0
+#        HighestNumAvailable: 1
+#        HighestNumUnavailable: 0
+#        LeakedConnectionCount: 0
+#        MaxCapacity: 15
+#        Name: PTAGIS3_Blueback
+#        NumAvailable: 1
+#        NumUnavailable: 0
+#        ObjectName: PTAGIS3_Blueback
+#        Parent: myserver
+#        PoolState: true
+#        Properties: database=Blueback::ptagis3;user=webjsp
+#        Registered: true
+#        State: Running
+#        Type: JDBCConnectionPoolRuntime
+#        VersionJDBCDriver: ca.edbc.jdbc.EdbcDriver
+#        WaitSecondsHighCount: 0
+#        WaitingForConnectionCurrentCount: 0
+#       WaitingForConnectionHighCount: 0
+
+
+#getAll counters from here.
+
+#output: <ActiveConnectionsAverageCount>  <ActiveConnectionsCurrentCount>  <ActiveConnectionsHighCount>  <ConnectionDelayTime>  <ConnectionLeakProfileCount>  <ConnectionsTotalCount>  <CurrCapacity>  <FailuresToReconnectCount>  <HighestNumAvailable>  <HighestNumUnavailable>  <LeakedConnectionCount>  <MaxCapacity>  <NumAvailable>  <NumUnavailable>  <WaitSecondsHighCount>  <WaitingForConnectionCurrentCount>  <WaitingForConnectionHighCount>
+# Initial Version : 12/05/2009
+# Modification :
+#######################################################################################
+
+# Since java program used by this shell needs web logic jar files,
+# we need to set class path in the weblogic.env if not already set
+# Also it requires java to be same as used by weblogic. So JAVA_HOME and path is also to be set in this filE
+# Following is sample of entries in weblogc.jar
+#export CLASSPATH=/root/bea/weblogic81/server/lib/weblogic.jar:.
+#export JAVA_HOME=/root/bea/jdk141_05
+#export PATH=$JAVA_HOME/bin:$PATH
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+if [ -f $CAV_MON_HOME/sys/weblogic.env ];then
+. $CAV_MON_HOME/sys/weblogic.env
+fi
+
+JAVA_BIN=$JAVA_HOME/bin/java
+CMD_OUT_FILE_NAME="/tmp/cm_weblogic_jdbc.out.$$"
+CMD_ERR_FILE_NAME="/tmp/cm_weblogic_jdbc.err.$$"
+URL=""
+MBEAN=""
+USERNAME=""
+PASSWORD=""
+
+INTERVAL=10000
+
+trap 'cleanup; exit -1' 1 2 3 4 5 13 15
+
+Usage()
+{
+  echo $*
+  echo "Usage:"
+  echo "$0 -U <URL> -u <username> -p <password> -d <domain name> -s <server name> -c <connection pool name> [-i <interval in millisecs>]"
+  echo "Where:"
+  echo "  -U is used to specify URL in t3://<host>:<port> format. Protocol must be t3. For example, t3://192.168.18.56:7001"
+  echo "  -u is used to specify username"
+  echo "  -p is used to specify password"
+  echo "  -d is use to specify domain name. For example, mydomain"
+  echo "  -s is use to specify server name. For example, myserver"
+  echo "  -c is use to specify connection pool name. For example, myconpool"
+  echo "  -i is interval in millisecs [Optional]. Default is 10000 (10 seconds)"
+  echo "  For example:"
+  echo "  $0 -U t3://192.168.18.56:9001 -u user1 -p password1 -d mydomain -s myserver -c myconpool -i 10000"
+  exit -1
+}
+
+cleanup()
+{
+  rm -f $CMD_OUT_FILE_NAME
+  rm -f $CMD_ERR_FILE_NAME
+}
+
+log_error()
+{
+  echo $*
+}
+
+get_count_value()
+{
+   FIELD_NAME=$1
+   FIELD_LINE=`grep -w "$FIELD_NAME" $CMD_OUT_FILE_NAME`
+   if [ $? != 0 ]; then
+      log_error "Error in getting $FIELD_NAME from the command outout"
+      echo "0"
+      return
+   fi
+   FIELD_VALUE=`echo $FIELD_LINE | cut -d ":" -f2 ` #awk -F':' '{print $2}'`
+   if [ $? != 0 ]; then
+      log_error "Error in getting $FIELD_NAME from the command outout"
+      echo "0"
+      return
+   fi
+   echo $FIELD_VALUE
+}
+
+run_command()
+{
+    $JAVA_BIN weblogic.Admin -url $URL -username $USERNAME -password $PASSWORD -pretty GET -mbean $MBEAN > $CMD_OUT_FILE_NAME 2>$CMD_ERR_FILE_NAME
+  if [ $? != 0 ]; then
+    log_error "Error in running the command to get weblogic jdbc"
+    # Since error also comes in out, we are cating this file also
+    cat $CMD_OUT_FILE_NAME
+    cat $CMD_ERR_FILE_NAME
+    cleanup
+    exit -1
+  fi
+}
+
+get_init_jdbc_pool_count()
+{
+  run_command
+  Init_ActiveConnectionsAverageCount=`get_count_value "ActiveConnectionsAverageCount:"`
+  Init_ActiveConnectionsHighCount=`get_count_value "ActiveConnectionsHighCount:"`
+  Init_ConnectionDelayTime=`get_count_value "ConnectionDelayTime:"`
+  Init_ConnectionLeakProfileCount=`get_count_value "ConnectionLeakProfileCount:"`
+  Init_ConnectionsTotalCount=`get_count_value "ConnectionsTotalCount:"`
+  Cur_CurrCapacity=`get_count_value "CurrCapacity:"`
+  Init_FailuresToReconnectCount=`get_count_value "FailuresToReconnectCount:"`
+  Init_HighestNumAvailable=`get_count_value "HighestNumAvailable:"`
+  Init_HighestNumUnavailable=`get_count_value "HighestNumUnavailable:"`
+  Init_LeakedConnectionCount=`get_count_value "LeakedConnectionCount:"`
+  Init_MaxCapacity=`get_count_value "MaxCapacity:"`
+  Init_NumAvailable=`get_count_value "NumAvailable:"`
+  Init_NumUnavailable=`get_count_value "NumUnavailable:"`
+  Init_WaitSecondsHighCount=`get_count_value "WaitSecondsHighCount:"`
+  Init_WaitingForConnectionHighCount=`get_count_value "WaitingForConnectionHighCount:"`
+}
+
+get_cur_jdbc_pool_count()
+{ 
+  run_command
+  Cur_ActiveConnectionsAverageCount=`get_count_value "ActiveConnectionsAverageCount:"`
+  Cur_ActiveConnectionsCurrentCount=`get_count_value "ActiveConnectionsCurrentCount:"`
+  Cur_ActiveConnectionsHighCount=`get_count_value "ActiveConnectionsHighCount:"`
+  Cur_ConnectionDelayTime=`get_count_value "ConnectionDelayTime:"`
+  Cur_ConnectionLeakProfileCount=`get_count_value "ConnectionLeakProfileCount:"`
+  Cur_ConnectionsTotalCount=`get_count_value "ConnectionsTotalCount:"`
+  Cur_CurrCapacity=`get_count_value "CurrCapacity:"`
+  Cur_FailuresToReconnectCount=`get_count_value "FailuresToReconnectCount:"`
+  Cur_HighestNumAvailable=`get_count_value "HighestNumAvailable:"`
+  Cur_HighestNumUnavailable=`get_count_value "HighestNumUnavailable:"`
+  Cur_LeakedConnectionCount=`get_count_value "LeakedConnectionCount:"`
+  Cur_MaxCapacity=`get_count_value "MaxCapacity:"`
+  Cur_NumAvailable=`get_count_value "NumAvailable:"`
+  Cur_NumUnavailable=`get_count_value "NumUnavailable:"`
+  Cur_WaitSecondsHighCount=`get_count_value "WaitSecondsHighCount:"`
+  Cur_WaitingForConnectionCurrentCount=`get_count_value "WaitingForConnectionCurrentCount:"`
+  Cur_WaitingForConnectionHighCount=`get_count_value "WaitingForConnectionHighCount:"`
+}
+
+show_output()
+{
+  ActiveConnectionsAverageCount=`expr $Cur_ActiveConnectionsAverageCount - $Init_ActiveConnectionsAverageCount`
+  ActiveConnectionsHighCount=`expr $Cur_ActiveConnectionsHighCount - $Init_ActiveConnectionsHighCount`
+  ConnectionLeakProfileCount=`expr $Cur_ConnectionLeakProfileCount - $Init_ConnectionLeakProfileCount`
+  ConnectionsTotalCount=`expr $Cur_ConnectionsTotalCount - $Init_ConnectionsTotalCount`
+  FailuresToReconnectCount=`expr $Cur_FailuresToReconnectCount - $Init_FailuresToReconnectCount`
+  LeakedConnectionCount=`expr $Cur_LeakedConnectionCount - $Init_LeakedConnectionCount`
+  WaitSecondsHighCount=`expr $Cur_WaitSecondsHighCount - $Init_WaitSecondsHighCount`
+  WaitingForConnectionHighCount=`expr $Cur_WaitingForConnectionHighCount - $Init_WaitingForConnectionHighCount`
+  echo $ActiveConnectionsAverageCount $Cur_ActiveConnectionsCurrentCount $ActiveConnectionsHighCount $Cur_ConnectionDelayTime $ConnectionLeakProfileCount $ConnectionsTotalCount $Cur_CurrCapacity $FailuresToReconnectCount $Cur_HighestNumAvailable $Cur_HighestNumUnavailable $LeakedConnectionCount $Cur_MaxCapacity $Cur_NumAvailable $Cur_NumUnavailable $WaitSecondsHighCount $Cur_WaitingForConnectionCurrentCount $WaitingForConnectionHighCount
+
+}
+
+check_args()
+{
+  if [ "XX$URL" = "XX" ]; then
+    Usage "Error: Mandatory argument URL is missing"
+  fi
+  if [ "XX$USERNAME" = "XX" ]; then
+    Usage "Error: Mandatory argument username is missing"
+  fi
+  if [ "XX$PASSWORD" = "XX" ]; then
+    Usage "Error: Mandatory argument password is missing"
+  fi
+  if [ "XX$DOMAIN_NAME" = "XX" ]; then
+    Usage "Error: Mandatory argument domain name is missing"
+  fi
+  if [ "XX$SERVER_NAME" = "XX" ]; then
+    Usage "Error: Mandatory argument server name is missing"
+  fi
+  if [ "XX$CONNECTION_POOL_NAME" = "XX" ]; then
+    Usage "Error: Mandatory argument connection pool name is missing"
+  fi
+
+}
+
+set_mbean()
+{
+  MBEAN="$DOMAIN_NAME:Location=$SERVER_NAME,Name=$CONNECTION_POOL_NAME,ServerRuntime=$SERVER_NAME,Type=JDBCConnectionPoolRuntime"
+}
+
+while getopts U:u:p:d:s:c:i: c
+do
+  case $c in
+    U) URL=$OPTARG ;;
+    u) USERNAME=$OPTARG ;;
+    p) PASSWORD=$OPTARG ;;
+    d) DOMAIN_NAME=$OPTARG ;;
+    s) SERVER_NAME=$OPTARG ;;
+    c) CONNECTION_POOL_NAME=$OPTARG ;;
+    i) INTERVAL=$OPTARG ;;
+    ?) Usage "Error: Invalid argument" ;;
+  esac
+done
+
+check_args
+
+set_mbean
+
+INTERVAL=`expr $INTERVAL / 1000`
+
+get_init_jdbc_pool_count
+
+while true
+do
+  # Test is over. So exit with success status
+  if [ $? = 1 ]; then
+    exit(0)
+  fi
+
+  lib_sleep $INTERVAL
+  get_cur_jdbc_pool_count
+  show_output
+done
+exit 0
+

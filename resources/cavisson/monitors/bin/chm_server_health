@@ -1,0 +1,300 @@
+#----------------------------------------------------------------------
+# Name            :  chm_server_health
+# Author          :  Abhishek
+# Purpose         :  To check threshold for disk and memory.
+# Usage           :  chm_server_health [--disk |--mem ] <critical value>:<major value>:<minor_value>
+# Where:
+#       --disk To check server disk usage(free disk)
+#       --mem  To check server memory usage(free memory)
+#Example -
+#        chm_server_health --mem 10:20:30
+#        chm_server_health --disk 10:20:30
+#                                       ^
+#                                     minor
+#Example -
+#        chm_server_health --mem 10:20:30
+#                                    ^
+#                                  major
+#        chm_server_health --disk 20:40:50
+#                                 ^
+#                              critical
+#----------------------------------------------------------------------
+#LINUX command output
+#[abhishek@netocean3 samples]$ free
+#             total       used       free     shared    buffers     cached
+#Mem:       1033292     617532     415760          0      30944     295356
+#-/+ buffers/cache:     291232     742060
+#Swap:      2031608          0    2031608
+#
+#AIX command output 
+#Ramsatee Kumar:bash-3.2$ svmon -G
+#               size       inuse        free         pin     virtual   mmode
+#memory      8388608     7452868      935740     1420543     3207036     Ded
+#pg space    1048576       10073
+#
+#               work        pers        clnt       other
+#pin         1163775           0           0      256768
+#in use      3207036           0     4245832
+#
+#PageSize   PoolSize       inuse        pgsp         pin     virtual
+#s    4 KB         -     6122580       10073      348223     1876748
+#m   64 KB         -       83143           0       67020       83143
+#
+#Ramsatee Kumar:bash-3.2$ getconf PAGESIZE
+#4096
+#
+#Solaris command outputs:
+##abhishek@opensolaris:~$ prtconf |grep "Memory"
+#Memory size: 768 Megabytes
+#
+#vmstat 1 2
+#kthr      memory            page            disk          faults      cpu
+#r b w   swap  free  re  mf pi po fr de sr s0 s1 -- --   in   sy   cs us sy id
+#0 0 0 590608 180156 44 278  0  0  0  0 414 7 -0  0  0  237 1932  698  5 31 64
+#0 0 0 550856 119856 12  41  0  0  0  0  0  0  0  0  0  226  292  204  2 27 71
+#
+#
+
+
+VFLAG=0 
+TOTAL_MEM=""
+FREE_MEM=""
+LOGFILE=""
+CMD="" 
+PGSIZE=""
+PGSIZEKB=""
+DISKOPT=""
+MEMOPT=""
+CURRENT_OS=`uname`
+VALUE=""
+MIN=""
+MAJ=""
+CRITICAL=""
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit 255
+  fi
+fi
+
+export CAV_MON_HOME
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+TEMP_FILE=$CAV_MON_TMP_DIR/chm_server_health.$$
+
+os_chk()
+{
+  if [ "X$CURRENT_OS" = "XLinux" ];then
+    CMD="free" 
+    TOTAL_MEM=`$CMD | awk '{if(NR == 2) print $2 }'`
+    #echo $TOTAL_MEM 
+    FREE_MEM=`$CMD | awk '{if(NR == 2) print $4 }'`
+    CACHE=` $CMD | awk '{if(NR == 2) print $7 }'`
+    #echo $FREE_MEM $CACHE
+    FREE_MEM=` expr $FREE_MEM + $CACHE `
+    #echo $FREE_MEM $CACHE
+  elif [ "X$CURRENT_OS" = "XAIX" ];then
+    CMD="svmon -G"
+    PGSIZE=`getconf PAGESIZE`
+    PGSIZEKB=` expr $PGSIZE / 1024 `
+    TOTAL_MEM=`$CMD | awk '{if(NR == 2) print $2 }'`
+    TOTAL_MEM=` expr $TOTAL_MEM \* $PGSIZEKB ` 
+    FREE_MEM=`$CMD | awk '{if(NR == 2) print $4 }'`
+    FREE_MEM=` expr $FREE_MEM \* $PGSIZEKB `
+  elif [ "X$CURRENT_OS" = "XSunOS" ];then
+    TOTAL_MEM=`/usr/sbin/prtconf |grep "Memory"| awk '{ print $3 }'`
+    FREE_MEM=`vmstat 1 2 | awk '{ if ( NR == 4) print $5 }'`
+    FREE_MEM=`expr $FREE_MEM / 1024 `
+  fi  
+}
+
+set_args()
+{
+  myargs=$1
+  if [ "X$myargs" = "X" ]; then
+    echo "Error: Wrong Arguments"
+    Usage
+  elif [ "X$myargs" != "X" ]; then
+    MIN=`echo $myargs | awk -F':' '{print $3}'` 
+    MAJ=`echo $myargs | awk -F':' '{print $2}'`
+    CRITICAL=`echo $myargs | awk -F':' '{print $1}'`
+  fi
+}
+
+chk_args()
+{
+  if [ "X$MIN" = "X" -o "X$MAJ" = "X" -o  "X$CRITICAL" = "X" ]; then
+    Usage
+  elif [ $MIN -gt 100 -o $MAJ -gt 100 -o  $CRITICAL -gt 100 ]; then
+    echo "Arguments value should be less than or equal to 100."
+    Usage
+  elif [ $MIN -lt 0 -o $MAJ -lt 0 -o  $CRITICAL -lt 0 ]; then
+    echo "Arguments can't be negative."
+    Usage
+  fi
+}
+
+#Output of df -P on Linux is:
+#df -P
+#Filesystem                                1024-blocks      Used       Available     Capacity    Mounted on
+#/dev/mapper/vg_cavissonserver-lv_root     51606140         34490368   16591632      68%         /
+#tmpfs                                     2023092          124        2022968       1%          /dev/shm
+#/dev/sda3                                 495844           68188      402056        15%         /boot
+#/dev/mapper/vg_cavissonserver-lv_home     420461200        378137540  20965480      95%         /home
+
+#Output of df -h on SunOS is:
+#$ df -h
+#Filesystem                             size   used  avail capacity  Mounted on
+#/dev/dsk/c0d0s0                        6.4G   3.8G   2.6G    60%    /
+#/devices                               0K     0K     0K     0%    /devices
+#ctfs                                   0K     0K     0K     0%    /system/contract
+#proc                                   0K     0K     0K     0%    /proc
+#mnttab                                 0K     0K     0K     0%    /etc/mnttab
+#swap                                   871M   960K   870M     1%    /etc/svc/volatile
+#objfs                                  0K     0K     0K     0%    /system/object
+#sharefs                                0K     0K     0K     0%    /etc/dfs/sharetab
+#/usr/lib/libc/libc_hwcap1.so.1         6.4G   3.8G   2.6G    60%    /lib/libc.so.1
+#fd                                     0K     0K     0K     0%    /dev/fd
+#swap                                   870M   176K   870M     1%    /tmp
+#swap                                   870M    28K   870M     1%    /var/run
+#/dev/dsk/c0d0s7                        13G   355M    12G     3%    /export/home
+#/vol/dev/dsk/c1t0d0/sol_10_1009_x86    2.4G   2.4G     0K   100%    /cdrom/sol_10_1009_x86
+
+disk_chk()
+{
+  total=100
+  dfr=0
+  if [ "X$CURRENT_OS" = "XLinux" -o "X$CURRENT_OS" = "XAIX" ];then
+    df -P | grep -vE '^Filesystem|tmpfs|cdrom' | awk '{ print $4 "\t" $5 "\t" $1 }'>$TEMP_FILE
+  elif [ "X$CURRENT_OS" = "XSunOS" ];then
+    #Added by Prachi on 12 september 2012.
+    #df -P and -vE not supported by SunOS 
+    df -h | egrep -v '^Filesystem|ctfs|proc|mnttab|objfs|sharefs|fd' | awk '{ print $4 "\t" $5 "\t" $1 }'>$TEMP_FILE
+  fi
+
+  while read line
+  do
+    #commented this because we are not creating array here, hence it will work without brackets. (Also there was a Issue: On solaris bracket is not supported)
+    #usep=$(echo $line | awk '{ print $2}' | cut -d'%' -f1)
+    usep=`echo $line | awk '{ print $2}' | cut -d'%' -f1`
+    #commented this because we are not creating array here, hence it will work without brackets. (Also there was a Issue: On solaris bracket is not supported)
+    #Filesystem=$(echo $line | awk '{print $3}') 
+    Filesystem=`echo $line | awk '{print $3}'`
+    dfr=`expr $total - $usep 2>/dev/null`
+    if [ $? -ne 0 -o "XX${dfr}" = "XX" ];then
+      continue;
+    fi
+    if [ $dfr -le $CRITICAL ]; then
+      ns_log_event "Critical" "Disk free space is ($dfr%) filesystem '$Filesystem' is less than critical threshold ($CRITICAL%)."
+    elif [ $dfr -le $MAJ ]; then
+      ns_log_event "Major" "Disk free space is ($dfr%) filesystem '$Filesystem' is less than major threshold ($MAJ%)."
+    elif [ $dfr -le $MIN ]; then
+      ns_log_event "Minor" "Disk free space is ($dfr%) filesystem '$Filesystem' is less than minor threshold ($MIN%)."
+    # Commented in 3.9.2 B8 to avoid sending this. TODO - Add this if debug is on
+    #else
+    #  ns_log_event "Information" "Disk free space is ($dfr%)  filesystem name '$Filesystem' is normal."
+    fi
+  done < $TEMP_FILE
+}
+
+mem_chk()
+{
+  PERCENT=`expr \( $FREE_MEM \* 100 \) / $TOTAL_MEM`
+  if [ $PERCENT -le $CRITICAL ]; then
+    ns_log_event "Critical" "Free memory is ($PERCENT%) is less than critical threshold ($CRITICAL%)."
+  elif [ $PERCENT -le $MAJ ]; then
+    ns_log_event "Major" "Free memory is ($PERCENT%) is less than major threshold ($MAJ%)."
+  elif [ $PERCENT -le $MIN ]; then
+    ns_log_event "Minor" "Free memory is ($PERCENT%) is less than minor threshold ($MIN%)."
+  #else
+  #  ns_log_event "Information" "Free memory is ($PERCENT%) is normal." 
+  fi
+}
+
+Usage()
+{
+  echo "Usage:"
+  echo "$0 [ --disk critical:major:minor ] [ --mem critical:major:minor ]"
+  echo "or"
+  echo "$0 [ --mem critical:major:minor ] [ --disk critical:major:minor ]"
+  ns_check_mon_fail_and_exit
+}
+
+
+#Long option parsing
+for token in  "$@"
+do
+  if [ "X$VFLAG" = "X0" ]; then
+    key=$token
+    VFLAG=1
+    continue
+  else
+    VALUE=$token
+    if [ "X$VALUE" != "X" ]; then
+      set_args $VALUE
+      chk_args 
+    fi
+    VFLAG=0
+  fi
+  case $key in
+    --mem)MEMOPT=$VALUE
+    ;;
+    --disk)DISKOPT=$VALUE
+    ;;
+    *)Usage;;
+  esac       
+done
+
+#echo "DISKOPT=$DISKOPT"
+#echo "MEMOPT=$MEMOPT"
+
+if [ "X$#" = "X0" -o "X$#" = "X3" -o $# -gt 4  ]; then
+  echo "Error: Bad Arguments"
+  Usage
+  ns_check_mon_fail_and_exit
+fi
+
+#argument validation
+#if [ "X$MEMOPT" != "X" ]; then
+#elif [ "X$DISKOPT" != "X" ]; then
+#set_args "$DISKOPT"
+#chk_args 
+#fi 
+
+# Checking OS to set memory usage command
+if [ "X$MEMOPT" != "X" ]; then
+  os_chk
+fi
+
+#Checking of option argument
+
+if [ "X$DISKOPT" = "X" -a "X$MEMOPT" = "X" ]; then
+  echo "Error: No Arguments"
+  Usage
+  ns_check_mon_fail_and_exit
+fi
+
+#funtions calls
+if [ "X$DISKOPT" != "X" -a  "X$MEMOPT" != "X" ];then
+  set_args $DISKOPT
+  disk_chk
+  set_args $MEMOPT
+  mem_chk
+elif [ "X$MEMOPT" != "X" -a "X$DISKOPT" = "X" ];then
+  set_args $MEMOPT
+  mem_chk
+elif [ "X$MEMOPT" = "X" -a "X$DISKOPT" != "X" ];then
+  set_args $DISKOPT
+  disk_chk
+fi
+
+rm -f $TEMP_FILE
+ns_check_mon_pass_and_exit
+exit 0
+

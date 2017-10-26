@@ -1,0 +1,70 @@
+#!/bin/bash
+####################################################################################
+# Name    :    nsi_get_linux_release_ex (it was a copy of nsi_get_linux_release to fix #bug 2345 this is done)
+# Author  :    Arun Nishad
+# 				generalized when moving to Ubuntu -Jai
+# Purpose :    This is a used to get linux release 
+#              
+# Usage   :    nsi_get_linux_release [-r|-b]
+#
+# Output  :     Option   FC4(32-bit)  FC9(32-bit) FC14(64-bit)
+#                 -r     FC4          FC9         FC14          
+#                 -b     32           32          64       
+#              
+######################################################################################
+
+#note: this has not been tested on all the distros
+
+get_distro_and_release()
+{
+	if [[ -f /etc/lsb-release ]] ;then  
+		DISTRO="Ubuntu"
+		RELEASE=`cat /etc/lsb-release |sed -n '/DISTRIB_RELEASE=/ s/[^0-9]//g p'`
+	elif [[ -f /etc/debian_version ]] ;then  
+		DISTRO="Debian"
+		RELEASE=`cat /etc/debian_version|sed -n '/DISTRIB_RELEASE=/ s/[^0-9]//g p'`
+	elif [[ -f /etc/redhat-release ]] && [[ `grep "Red Hat" /etc/redhat-release` ]] ;then 
+		DISTRO="Redhat"
+		RELEASE=`cat /etc/redhat-release |sed -n 's/[^0-9]//g p'`
+	elif [[ -f /etc/redhat-release ]] && [[ `grep "Fedora" /etc/redhat-release` ]] ;then 
+		DISTRO="Fedora"
+		RELEASE=`cat /etc/redhat-release |sed -n 's/[^0-9]//g p'`
+	elif [[ -f /etc/SuSE-release ]] ;then  
+		DISTRO="Suse"
+		RELEASE=`cat /etc/SuSE-release |sed -n 's/[^0-9]//g p'`
+	elif [[ -f /etc/slackware-version ]] ;then  
+		DISTRO="Slackware"
+		RELEASE=`cat /etc/slackware-version |sed -n 's/[^0-9]//g p'`
+	fi
+}
+
+
+#MAIN
+
+if [ $# -eq 0 ];then
+  ARG="-r"
+else
+  ARG=$1
+fi
+
+DISTRO="Unknown"
+RELEASE="Unknown"
+
+#REDHAT_RELEASE=`cat /etc/redhat-release | sed s/[^0-9]//g`
+MACHINE_BIT=`uname -m`
+
+if [ $ARG == "-b" ];then 
+    [ $MACHINE_BIT == "i686" ] && echo 32
+    [ $MACHINE_BIT == "x86_64" ] && echo 64
+elif [ $ARG == "-r" ];then 
+    #echo "FC${REDHAT_RELEASE}"
+		get_distro_and_release
+    echo "${RELEASE}"
+elif [ $ARG == "-d" ];then 
+		get_distro_and_release
+    echo "${DISTRO}"
+fi
+
+exit 0
+
+

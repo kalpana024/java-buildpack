@@ -1,0 +1,675 @@
+# chkconfig: 2345 98 02
+# description: cavisson monitor server (Java)
+# cmon   Start up cavisson monitor server (Java)
+#
+# Purpose: To start/stop/restart/force-reload 
+# Varaibles NS_WDIR, PORT, JAVA_HOME, CAV_MON_HOME will be set on the basis to createserver.env (define location)
+
+#Notes:
+
+# 1. How to kill customer monitor if hanging after test
+# Define CAV_MON_PATTERN_FOR_KILL in sys/cmon.env to kill monitors using pkill/search using these
+# pattern
+# 2. How to register customer program to be executed after test is over
+# Define CAV_MON_CLEANUP_PGM in sys/cmon.env. It must be full path and have executed permisson
+#
+# MODIFICATION HISTORY:
+#  1.Removed sample directory
+#
+
+#Set classpath and opts as "", as it gets appended in case of restart for server admin command
+CLASSPATH="" 
+#CMON_OPTS is for java options for CavMonAgent
+CMON_OPTS=""
+#CAV_MON_AGENT_OPTS are options to be passed to CavMonAgent
+# We can add these options in file sys/cmon.env
+#  CAV_MON_AGENT_OPTS=-d         -> For running in debug mode
+#  CAV_MON_AGENT_OPTS=-H <count> -> To increase/decrease heartbeat.
+#                                   By default heartbeat is enabled with max heartbeat count 6)
+#  CAV_MON_AGENT_OPTS=-p         -> port
+#  CAV_MON_AGENT_OPTS=-i         -> listenIP
+#  CAV_MON_AGENT_OPTS=-T         -> testRunKeepAliveTime
+#  CAV_MON_AGENT_OPTS=-S         -> NDBufferSize
+#  CAV_MON_AGENT_OPTS=-N         -> NDBufferCount
+#  CAV_MON_AGENT_OPTS=-C         -> CavmonStatsDebugFlag           
+#  CAV_MON_AGENT_OPTS=-s         -> shell
+#  CAV_MON_AGENT_OPTS=-l         -> logsRetentionPeriod
+#
+# Other configuration settings for cmon:
+#  CHECK_CMON_INTERVAL       
+#    time interval for nsu_check_mon shell. Default interval is of 5 min (60 * 5)
+#    0 means do not start nsu_check_cmon
+#  CMON_PING_CHECK_INTERVAL  
+#    time interval for nsu_check_mon shell to check whether cmon is responding or not. 
+#    Default interval is 3 times of CHECK_CMON_INTERVAL i.e. 15 mins.
+#    0 means do not do ping check
+#
+#  CMON_LOG_MAX_SIZE             -> cmon.log file rollover size in KB. Default size is 1 MB
+#  CHK_CMON_LOG_MAX_SIZE         -> nsu_check_cmon.log file rollover size in KB. Default size is 1 MB
+#
+#
+####### Instructions regarding giving sudo access to some monitors or utilities ######
+# Sometimes, few monitors or utilities need to be run with sudo permission.
+# For example, nsi_get_java_threaddump can get thread dump of a process running with same user as nsi_get_java_thread_dump
+# To get thread dump of process running with different user, nsi_get_java_thread_dump must have sudo permission 
+#
+# Following are steps to run nsi_get_java_thread_dump with sudo if cmon is not running with root already
+#   1. Changes in cmon.env file
+#        a. Add new variable CMON_SUDO_ACCESS=1 
+#   2. Changes in /etc/sudoers file (You must have root privilage to read/write this file)
+#        a. nsi_get_java_thread_dump needs to be given permission to run with sudo
+#           eg- prachi_test ALL=(ALL) NOPASSWD: /home/prachi_test/cavisson/monitors/bin/nsi_get_java_thread_dump
+#           Here prachi_test is username who will run the shell. Full path of shell must be provided
+#
+#        b. When a shell is executed with sudo, env variable are not preserved.
+#           env_reset command in /etc/sudoers does this job. env variables can be preserved using env_keep command.
+#           Above commands are entered as following -
+#           Defaults  env_reset  or Defaults  env_keep.
+#           env_keep will preserve all env variables, that might not be the requirement
+#
+#           To preserve specific variables, following command can be used
+#           Defaults   env_keep += "varName"
+#
+#           Three variables need to be preserved, ie CAV_MON_HOME, JAVA_HOME, CMON_SUDO_ACCESS
+#           Defaults   env_keep += "CAV_MON_HOME"
+#           Defaults   env_keep += "JAVA_HOME"
+#           Defaults   env_keep += "CMON_SUDO_ACCESS"
+#           Above commands should be entered anywhere but after env_reset command in file
+#
+#   3. Restart cmon to make changes in cmon.env take effect 
+#
+# Design changes in nsi_get_java_thread_dump 
+#   1. CMON_SUDO_ACCESS variable should be set and nsi_get_java_thread_dump must have sudo permission,
+#      if cmon is not running with root and nsi_get_java_thread_dump need to take thread_dump of diff user
+#   2. nsi_get_java_instances will output 'YesUsingSudo' in 'UsingCmd' field if CMON_SUDO_ACCESS is set
+#   3. Gui will call nsi_take_java_thread_dump with -r option, and nsi_take_java_thread_dump will run 
+#      nsi_get_java_thread_dump with prefix sudo.
+#
+#
+CHECK_CMON_INTERVAL=300 
+CMON_PING_CHECK_INTERVAL=3              #means 3 times of CHECK_CMON_INTERVAL ( 3 * 300 )
+CAV_MON_AGENT_OPTS=""
+PS_CMD_FOR_SEARCH=""
+PS_USING_PID=""
+CMON_LOG_MAX_SIZE=1024    #1024*1024 bytes (1 MB)
+CHK_CMON_LOG_MAX_SIZE=1024   #1024*1024 bytes (1 MB)
+
+
+#saving cmon option 'start/stop/restart/force-reload/restart_from_cmon' just to check whether restarted from cmon or directly 
+RESTART_FROM_CMON=$1
+IS_CMON_PARENT=$2
+CURRENT_USER=`whoami`
+
+#Setting awk command for sun os
+if [ "$OS_NAME" = "SunOS" ]; then
+  AWK_CMD="nawk"
+else
+  AWK_CMD="awk"
+fi
+
+mkdir -p $CAV_MON_HOME/sys
+#Note - Any change done here should also be done in cmon_set_env file also
+
+
+LOGFILE="$CAV_MON_HOME/logs/cmon.log"
+PIDFILE="$CAV_MON_HOME/sys/cmon.pid"
+
+#nf env set
+nfenv="$CAV_MON_HOME/bin/nfenv"
+if [ -f "$nfenv" ];then
+  source $CAV_MON_HOME/bin/nfenv
+CLASSPATH=$CLASSPATH:$CAV_MON_HOME/lib/jruby.jar
+fi
+#End nf env set
+
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+write_in_logfile()
+{
+  STR=$* 
+  WRITE_FLAG=0
+ 
+  if [ ! -f $LOGFILE ]; then
+    touch ${LOGFILE}    
+    echo "`date +'%m/%d|%r'`|Log file ($LOGFILE) does not exists. Created log file $LOGFILE" >> $LOGFILE
+  fi
+
+  #find file size
+  #if size > CMON_LOG_MAX_SIZE then rollover
+  #else append with date and time
+
+  if [ `ls -l $LOGFILE | awk -F" " '{print $5}'` -gt `expr $CMON_LOG_MAX_SIZE \* 1024` ]; then
+    WRITE_FLAG=1
+  fi 
+ 
+  if [ $WRITE_FLAG -eq 1 ]; then
+    #rollover
+    mv ${LOGFILE} ${LOGFILE}.prev
+    echo "`date +'%m/%d|%r'`|$STR" >> $LOGFILE
+  else
+    echo "`date +'%m/%d|%r'`|$STR" >> $LOGFILE
+  fi
+}
+
+write_in_logfile_and_on_console()
+{
+  STR=$1
+
+  #on console
+  echo ${STR} 
+  #in log file
+  write_in_logfile "$STR" 
+}
+
+#Check if CAV_MON_HOME is set or not
+if [ "XX$CAV_MON_HOME" = "XX" ];then
+  write_in_logfile_and_on_console "CAV_MON_HOME is not set."
+  exit 255
+fi
+
+#Source in all cases
+if [ -f $CAV_MON_HOME/sys/cmon.env ];then
+. $CAV_MON_HOME/sys/cmon.env 
+else
+#Create empty so that user knows about this file and update if needed
+  touch $CAV_MON_HOME/sys/cmon.env 
+  chmod +x $CAV_MON_HOME/sys/cmon.env 
+fi
+
+#check java installed as part of RPM and if yes, use this.
+ JAVA_DIR="`dirname $CAV_MON_HOME`/java"
+ if [ -d $JAVA_DIR ];then
+   #Assumption - only one jdk dir exist in file $JAVA_DIR/.version
+   JDK_DIR=`cat $JAVA_DIR/.version`
+   if [ -d $JAVA_DIR/$JDK_DIR ];then
+     write_in_logfile_and_on_console "Setting JAVA_HOME as $JAVA_DIR/$JDK_DIR because java installed as part of RPM"
+     #sed -i "s|JAVA_HOME.*|JAVA_HOME=$JAVA_DIR/$JDK_DIR|g" $CAV_MON_HOME/sys/cmon.env
+     JAVA_HOME="$JAVA_DIR/$JDK_DIR"
+   fi
+ fi
+
+
+if [ "XX$JAVA_HOME" = "XX" ];then
+  write_in_logfile_and_on_console "JAVA_HOME is not set."
+  exit 255
+fi
+
+JAVA_BIN="$JAVA_HOME/bin/java"
+
+#Check if JAVA_HOME is correct or not
+
+if [ ! -d $JAVA_HOME ]; then
+  write_in_logfile_and_on_console "JAVA_HOME ($JAVA_HOME) is not a valid directory"
+  exit 255
+fi
+
+if [ ! -f $JAVA_BIN ]; then
+  write_in_logfile_and_on_console "JAVA_HOME ($JAVA_HOME) does not have java binary ($JAVA_BIN))"
+  exit 255
+fi
+
+#Set PATH to samples & bin so that we can use sample custom monitor in CUSTOM_MONITOR keyword without path
+#PATH="$CAV_MON_HOME/bin:$CAV_MON_HOME/samples:$CAV_MON_HOME/custom:$JAVA_HOME/bin:$PATH"
+
+#Issue - PATH and CLASSPATH gets appeneded when we restart using server admin
+#
+#Set PATH to bin so that we can use custom monitor in CUSTOM_MONITOR keyword without path:Removed sample directory
+
+#This is done to remove duplicates pattern from PATH, this is done temporarily for Kohl's because rght now kohl's has cmon running with lots of duplicates PATH. We can remove this code later
+if [ "X$RESTART_FROM_CMON" = "Xrestart_from_cmon" ];then
+  APPENDED_PATTERN_COUNT=`echo $PATH | $AWK_CMD -F"$CAV_MON_HOME/bin:$CAV_MON_HOME/custom:$JAVA_HOME/bin:" '{print NF}'`
+  if [ $APPENDED_PATTERN_COUNT -gt 0 ]; then
+    EXTRACTED_DATA=`echo $PATH | $AWK_CMD -F"$CAV_MON_HOME/bin:$CAV_MON_HOME/custom:$JAVA_HOME/bin:" '{print $NF}'`  
+    PATH="$CAV_MON_HOME/bin:$CAV_MON_HOME/custom:$JAVA_HOME/bin:$EXTRACTED_DATA"
+  fi
+fi
+
+#Issue: On restarting cmon from server admin, PATH gets appended because here cmon restarts cmon, and cmon already has PATH set that's why it keeps appending, Now taken another option for restart 'restart_from_cmon' - in this case it will not append PATH 
+#In nsu_cmon_upgrade shell we are using this option to restart cmon
+
+if [ "X$RESTART_FROM_CMON" != "Xrestart_from_cmon" ];then
+  PATH="$CAV_MON_HOME/bin:$CAV_MON_HOME/custom:$JAVA_HOME/bin:$PATH"
+fi
+
+#Removing sample
+if [ "XX$CLASSPATH" = "XX" ]; then
+  CLASSPATH="$CAV_MON_HOME/lib/java-getopt-1.0.9.jar:$CAV_MON_HOME/bin:$CAV_MON_HOME/custom:$CAV_MON_HOME/bin/CavMonAgent.jar:$CAV_MON_HOME/lib/CmonLib.jar:$CAV_MON_HOME/lib/gcviewer-1.29.jar:$CAV_MON_HOME/lib/asm-all-4.0.jar:$CAV_MON_HOME/lib/base64.jar:$CAV_MON_HOME/lib/json_simple-1.1.jar:$CAV_MON_HOME/lib/jedis-2.6.0.jar:$CAV_MON_HOME/lib/mongo-java-driver-3.4.2.jar:$CAV_MON_HOME/lib/bcprov-jdk15on-156.jar:$CAV_MON_HOME/lib/bcpkix-jdk15on-1.48.jar:$CAV_MON_HOME/lib/commons-net-3.0.1.jar:$CAV_MON_HOME/lib/mysql-connector-java-5.1.37.jar:$CAV_MON_HOME/lib/log4j-1.2.16.jar:$CAV_MON_HOME/lib/slf4j-log4j12-1.5.8.jar:$CAV_MON_HOME/lib/slf4j-api-1.5.8.jar"
+else
+  CLASSPATH="$CLASSPATH:$CAV_MON_HOME/lib/java-getopt-1.0.9.jar:$CAV_MON_HOME/bin:$CAV_MON_HOME/custom:$CAV_MON_HOME/bin/CavMonAgent.jar:$CAV_MON_HOME/lib/CmonLib.jar:$CAV_MON_HOME/lib/gcviewer-1.29.jar:$CAV_MON_HOME/lib/asm-all-4.0.jar:$CAV_MON_HOME/lib/base64.jar:$CAV_MON_HOME/lib/json_simple-1.1.jar:$CAV_MON_HOME/lib/jedis-2.6.0.jar:$CAV_MON_HOME/lib/mongo-java-driver-3.4.2.jar:$CAV_MON_HOME/lib/bcprov-jdk15on-156.jar:$CAV_MON_HOME/lib/bcpkix-jdk15on-1.48.jar:$CAV_MON_HOME/lib/commons-net-3.0.1.jar:$CAV_MON_HOME/lib/mysql-connector-java-5.1.37.jar:$CAV_MON_HOME/lib/log4j-1.2.16.jar:$CAV_MON_HOME/lib/slf4j-log4j12-1.5.8.jar:$CAV_MON_HOME/lib/slf4j-api-1.5.8.jar"
+fi
+
+#CLASSPATH="$CAV_MON_HOME/lib/java-getopt-1.0.9.jar:$CAV_MON_HOME/samples:$CAV_MON_HOME/bin:$CAV_MON_HOME/common/monitor_common.jar:$CAV_MON_HOME/lib/gcviewer-1.29.jar"
+
+cd $CAV_MON_HOME/bin
+
+#cmon will be identified by "DPKG=cmon -DCAV_MON_HOME=$CAV_MON_HOME "
+# So make sure there is ONE and Only One space after cmon and after cav mon hom
+JAVA_OPTS="-DPKG=cmon -DCAV_MON_HOME=$CAV_MON_HOME $CMON_OPTS -DCLASSPATH=$CLASSPATH -DPATH=$PATH -DJAVA_HOME=$JAVA_HOME"
+
+if [ "X$CMON_SUDO_ACCESS" != "X" ]; then
+  JAVA_OPTS="$JAVA_OPTS -DCMON_SUDO_ACCESS=$CMON_SUDO_ACCESS"
+fi
+
+#Handle to disable the NF when java version is less than 8
+JAVA_VERSION=`java -version 2>&1 |head -1|cut -d'"' -f2|cut -d'.' -f2`
+if [ $JAVA_VERSION -lt 8 ];then
+  CAV_MON_AGENT_OPTS=`echo $CAV_MON_AGENT_OPTS | sed 's/-F *1/-F 0/'`
+fi
+
+#Running as thread
+#COMMAND="$JAVA_BIN $JAVA_OPTS CavMonAgent $CAV_MON_AGENT_OPTS"
+COMMAND="java $JAVA_OPTS CavMonAgent $CAV_MON_AGENT_OPTS"
+
+#Change perm to 777 so that custom monitor (remote) can open log files if not running as root
+#These lines are copied from nsi_cmon_upgrade as in server where upgrade is not done using bin file, these are not getting created
+mkdir -p $CAV_MON_HOME/logs  
+mkdir -p $CAV_MON_HOME/custom 
+
+chmod 755 $CAV_MON_HOME/logs 
+chmod 755 $CAV_MON_HOME/custom  
+
+DESC="cmon"
+
+#Doing all the export at one place
+export NS_WDIR
+export CAV_MON_HOME
+export PATH
+export CLASSPATH
+export JAVA_OPTS
+export CMON_SUDO_ACCESS 
+
+set_cmon_mon_shell()
+{
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    UNIX_SHELL=`echo $CAV_MON_AGENT_OPTS | nawk -F'-s ' '{print $2}' | awk -F' ' '{print $1}'`
+  else
+    UNIX_SHELL=`echo $CAV_MON_AGENT_OPTS | awk -F' -s ' '{print $2}' | awk -F' ' '{print $1}'`
+  fi    
+
+  if [ "X$UNIX_SHELL" = "X" ]; then
+    set_mon_shell
+  fi
+  write_in_logfile "UNIX_SHELL set to $UNIX_SHELL"
+}
+
+init() 
+{
+  NSU_CHK_MON_DEBUG=0
+  CMON_PORT=7891 #Default
+
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    CMON_PORT=`echo $CAV_MON_AGENT_OPTS | nawk -F'-p' '{print $2}' | awk -F' ' '{print $1}'`
+  else
+    CMON_PORT=`echo $CAV_MON_AGENT_OPTS | awk -F'-p' '{print $2}' | awk -F' ' '{print $1}'`
+  fi    
+  if [ "X$CMON_PORT" = "X" ]; then
+    CMON_PORT=7891
+  fi
+
+  export CMON_PORT
+
+  #set file roll over in bytes
+  CHK_CMON_LOG_MAX_SIZE_IN_BYTES=`expr $CHK_CMON_LOG_MAX_SIZE \* 1024` 
+
+  #set cmon ping chk interval 
+  CHK_CMON_PING_CHECK_INTERVAL=`expr $CMON_PING_CHECK_INTERVAL \* $CHECK_CMON_INTERVAL`
+
+  #set nsu_check_cmon debug
+  echo $CAV_MON_AGENT_OPTS | $PS_GREP_CMD "\-d" >/dev/null 2>&1
+  if [ $? -eq 0 ]; then
+    NSU_CHK_MON_DEBUG=1
+  fi
+
+  set_cmon_mon_shell
+
+  write_in_logfile "CMON_PORT = $CMON_PORT, CHK_CMON_LOG_MAX_SIZE_IN_BYTES = $CHK_CMON_LOG_MAX_SIZE_IN_BYTES, CHK_CMON_LOG_MAX_SIZE = $CHK_CMON_LOG_MAX_SIZE, CHK_CMON_PING_CHECK_INTERVAL = $CHK_CMON_PING_CHECK_INTERVAL, CMON_PING_CHECK_INTERVAL = $CMON_PING_CHECK_INTERVAL, NSU_CHK_MON_DEBUG = $NSU_CHK_MON_DEBUG"
+}
+
+set_ps_cmd()
+{
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    PS_CMD_FOR_DATA="/usr/bin/ps"
+    PS_USING_PID="/usr/ucb/ps -auxwww"
+    if [ ! -f /usr/ucb/ps ];then
+      write_in_logfile_and_on_console "Error: ps command not found on path /usr/ucb/ps. Hence standard ps command will be used." 
+      PS_CMD_FOR_SEARCH="ps -ef" # Do not use ps -lef as need pid at filed 2
+    else
+      PS_CMD_FOR_SEARCH="/usr/ucb/ps -auxwww"
+    fi
+    if [ ! -f /usr/xpg4/bin/grep ];then
+      write_in_logfile_and_on_console "Error: grep command not found on path /usr/xpg4/bin/grep. Hence extended regular expression may not be supported." 
+      PS_GREP_CMD="/usr/bin/egrep -e"  #Search for a pattern_list(full regular expression that 
+                                       #begins with a -).
+   else
+     PS_GREP_CMD="/usr/xpg4/bin/grep -E"
+   fi
+  else #Linux,AIX
+    PS_CMD_FOR_DATA="ps"
+    PS_CMD_FOR_SEARCH="ps -ef" # Do not use ps -lef as need pid at filed 2
+    #PS_GREP_CMD="grep -e"
+    PS_GREP_CMD="grep -E"      # Fixed bug: 4574
+    PS_USING_PID="ps -fp"
+  fi
+}
+
+is_pid_running()
+{
+  #STATUS=`$PS_USING_PID $PID | grep -w java | grep -cw "\-DCAV_MON_HOME"`
+  #Removing w because it is not working on solaris
+  #STATUS=`$PS_USING_PID $PID | grep -w java | grep -c "\-DCAV_MON_HOME"`
+  STATUS=`$PS_USING_PID $PID | grep -w java | grep -c "\-DCAV_MON_HOME=$CAV_MON_HOME"`
+}
+
+get_running_pid_by_ps()
+{
+  #Make sure only one space after DPKG=cmon. 
+  # Add $CAV_MON_HOME to support that more than one cmon in one machine
+
+  #Most customer machine do not have /ucb/ on their solaris server. That's why using standard ps command.
+  #Command: ps -o "pid args"
+  #output:
+  #   PID COMMAND
+  #   797 bash
+  #   793 -sh
+  #   3215 ps -o pid args
+  #   2865 java -DPKG=cmon -DCAV_MON_HOME=/export/home/netstorm/cavisson/monitors -DCLASSP
+  #This may not work in all cases, when JAVA_HOME or CAV_MON_HOME is large.
+  if [ "X$OS_NAME" = "XSunOS" -a ! -f /usr/ucb/ps ]; then
+    PID=`ps -o "pid args" | grep "\-DPKG=cmon \-DCAV_MON_HOME=$CAV_MON_HOME " | grep -v "grep" | awk '{print $1}'`
+  else
+    PID=`$PS_CMD_FOR_SEARCH | grep "\-DPKG=cmon \-DCAV_MON_HOME=$CAV_MON_HOME " | grep -v "grep" | awk '{print $2}'`
+  fi
+}
+
+get_running_pid()
+{
+  #Get pid from pid file
+  if [ -f $PIDFILE ];then
+    FILE_PID=`cat $PIDFILE` 
+    if [ "XX$FILE_PID" = "XX" ];then
+      write_in_logfile_and_on_console "$DESC PID file ($PIDFILE) does not have PID." 
+      #exit 255
+    fi
+  fi
+  #if [ "XX$PID" = "XX" ];then
+    get_running_pid_by_ps
+    #if [ "XX$PID" = "XX" ];then
+    #  echo "CavMonAgent is not running"
+    #  exit 255
+    #fi
+  #fi
+
+  if [ "X$FILE_PID" = "X" ]; then
+    FILE_PID=$PID
+  fi
+
+  if [ "X$PID" != "X" ]; then
+    if [ "X$FILE_PID" != "X$PID" ]; then
+      write_in_logfile_and_on_console "$DESC PID ($FILE_PID) in file ($PIDFILE) is not same as actual cmon pid ($PID). Using actual pid" 
+    fi
+  fi
+
+  if [ "XX$PID" != "XX" ];then
+    is_pid_running
+    if [ "$STATUS" = "0" ];then
+     PID=""
+    fi
+  fi
+}
+
+show_createserver()
+{
+  operation="$1"
+  
+  get_running_pid
+  if [ "XX$PID" != "XX" ];then
+    write_in_logfile_and_on_console "$DESC is $operation with pid($PID)." 
+    $PS_USING_PID $PID 
+  else
+     if [ "XX$operation" = "XXstopped" ];then
+       write_in_logfile_and_on_console "$DESC is $operation." 
+     else
+       write_in_logfile_and_on_console "$DESC is not $operation." 
+     fi
+  fi
+}
+
+get_nsu_check_cmon_pid()
+{
+  nsu_check_cmon_running_pid=0
+  out=`$PS_CMD_FOR_SEARCH | $PS_GREP_CMD "nsu_check_cmon" | $PS_GREP_CMD "\-l $CAV_MON_HOME"`
+  if [ $? = 0 ];then
+    nsu_check_cmon_running_pid=`echo $out | cut -d ' ' -f 2`
+    kill_flag=1
+  fi
+  write_in_logfile "Obtained nsu_check_cmon_running_pid is $nsu_check_cmon_running_pid"
+}
+
+stop_nsu_check_cmon()
+{
+  kill_flag=0
+
+  #out=`$PS_CMD_FOR_SEARCH | $PS_GREP_CMD "nsu_check_cmon" | $PS_GREP_CMD "\-l $CAV_MON_HOME"`
+  #if [ $? = 0 ];then
+   # nsu_check_cmon_running_pid=`echo $out | cut -d ' ' -f 2`
+   # write_in_logfile "Stopping nsu_check_cmon with pid ($nsu_check_cmon_running_pid)" 
+   # kill -9 $nsu_check_cmon_running_pid
+  #fi
+  get_nsu_check_cmon_pid
+  write_in_logfile "Stopping nsu_check_cmon with pid ($nsu_check_cmon_running_pid)" 
+  if [ $kill_flag -eq 1 ]; then
+    kill -9 $nsu_check_cmon_running_pid  
+    sleep 1
+    write_in_logfile "nsu_check_cmon is stopped" 
+  fi
+}
+
+start_nsu_check_cmon()
+{
+  write_in_logfile "Starting nsu_check_cmon"
+
+  if [ $NSU_CHK_MON_DEBUG -eq 1 ];then 
+    nohup $UNIX_SHELL nsu_check_cmon -l $CAV_MON_HOME -p $PID -i $CHECK_CMON_INTERVAL -s $CHK_CMON_LOG_MAX_SIZE_IN_BYTES -I $CHK_CMON_PING_CHECK_INTERVAL -P $CMON_PORT -D >>$LOGFILE 2>&1 &
+  else
+    nohup $UNIX_SHELL nsu_check_cmon -l $CAV_MON_HOME -p $PID -i $CHECK_CMON_INTERVAL -s $CHK_CMON_LOG_MAX_SIZE_IN_BYTES -I $CHK_CMON_PING_CHECK_INTERVAL -P $CMON_PORT >>$LOGFILE 2>&1 &
+  fi
+
+  get_nsu_check_cmon_pid
+  sleep 1
+  write_in_logfile "Started nsu_check_cmon with pid ($nsu_check_cmon_running_pid)" 
+}
+
+checkUser()
+{ 
+  if [ "X$CMON_USER" != "X" ]; then
+    if [ "X$CMON_USER" != "X$CURRENT_USER" ]; then
+      write_in_logfile_and_on_console "Cmon service should be controlled from user '$CMON_USER'"
+      exit 255
+    fi
+  fi
+}
+
+stopCmon()
+{
+  write_in_logfile_and_on_console "Stoping $DESC: " 
+
+  checkUser
+
+  if [ $CHECK_CMON_INTERVAL -ne 0 ];then
+    stop_nsu_check_cmon
+  fi
+
+  get_running_pid
+  if [ "XX$PID" != "XX" ];then
+    write_in_logfile "UNIX_SHELL = $UNIX_SHELL. Calling $UNIX_SHELL kill_monitor CMON_PID = $PID." 
+    nohup $UNIX_SHELL kill_monitor -P $PID >>$LOGFILE 2>&1
+    write_in_logfile "kill_monitor ends." 
+
+    write_in_logfile_and_on_console "Stopping CavMonAgent with pid($PID)" 
+    kill $PID
+    if [ $? != 0 ]; then
+      write_in_logfile_and_on_console "Error in stopping CavMonAgent with pid($PID)" 
+      exit 255
+    fi
+    #Sleep so that port get freed by the system
+    sleep 2
+    $PS_USING_PID $PID >/dev/null 2>&1
+    if [ $? = 0 ];then
+      write_in_logfile_and_on_console "CavMonAgent still running. Killing by sending signal 9" 
+      kill -9 $PID
+    fi
+    show_createserver "stopped"
+    write_in_logfile_and_on_console "Removing running_tests directory" 
+    rm -rf $CAV_MON_HOME/logs/running_tests
+  else
+    write_in_logfile_and_on_console "$DESC is not running." 
+  fi
+}
+
+startCmon()
+{
+  write_in_logfile_and_on_console "Starting $DESC: " 
+
+  checkUser
+
+  get_running_pid_by_ps
+  #get_running_pid
+  if [ "XX$PID" != "XX" ];then
+    write_in_logfile_and_on_console "$DESC is already running with pid ($PID)." 
+    $PS_USING_PID $PID
+    exit 255
+  fi
+
+  write_in_logfile "Removing running_tests directory"
+  rm -rf $CAV_MON_HOME/logs/running_tests  
+
+  write_in_logfile "JAVA_HOME is $JAVA_HOME" 
+  write_in_logfile "Starting CavMonAgent using:" 
+  write_in_logfile "    $COMMAND" 
+
+  write_in_logfile "IS_CMON_PARENT = $IS_CMON_PARENT"
+  if [ "X$IS_CMON_PARENT" = "Xcmon" ];then
+    write_in_logfile "Run cmon in background"
+    nohup $COMMAND >>$LOGFILE 2>&1 &
+  else
+    write_in_logfile "Run cmon in foreground"
+    $COMMAND >>$LOGFILE 2>&1 
+  fi
+
+  #Sleep so that next ps can catch this process
+  sleep 1
+  get_running_pid_by_ps
+  if [ "XX$PID" = "XX" ];then
+    write_in_logfile_and_on_console "Error in starting in $DESC." 
+    exit 255
+  fi
+  echo $PID >$PIDFILE
+  show_createserver "started"
+
+  if [ $CHECK_CMON_INTERVAL -ne 0 ];then
+    stop_nsu_check_cmon
+    start_nsu_check_cmon
+  fi
+}
+
+show_version()
+{
+   Version=`cat $CAV_MON_HOME/etc/version | grep -w "VERSION" | awk '{print $2}'`
+   Build=`cat $CAV_MON_HOME/etc/version | grep -w "BUILD" | awk '{print $2}'`
+   #write_in_logfile_and_on_console "cmon: Version $Version (build# $Build)" 
+   echo "cmon: Version $Version (build# $Build)" 
+}
+
+show_monitors_running()
+{
+  get_running_pid_by_ps
+  if [ "XX$PID" = "XX" ];then
+    write_in_logfile_and_on_console "$DESC is not running" 
+    exit 255
+  fi
+
+  if [ "X$OS_NAME" = "XSunOS" -a ! -f /usr/ucb/ps ]; then
+    MONITORS=`ps -o "pid args" | grep -v show_monitors | grep -v "grep" | awk -v pid=$PID '{if($3 == pid) print $0}'`
+  else
+    MONITORS=`$PS_CMD_FOR_SEARCH | grep -v show_monitors | grep -v "grep" | awk -v pid=$PID '{if($3 == pid) print $0}'`
+  fi
+
+  #MONITORS=`$PS_CMD_FOR_SEARCH | grep -v show_monitors | grep -v "grep" | awk -v pid=$PID '{if($3 == pid) print $0}'`
+
+  if [ "X$MONITORS" = "X" ];then
+    write_in_logfile_and_on_console "No Monitors are running" 
+    write_in_logfile_and_on_console "(Note: Run Every Time monitors may not be shown at this time because these monitors run on every interval)" 
+  else
+    write_in_logfile_and_on_console "Following Monitors are running:" 
+    write_in_logfile_and_on_console "(Note: Run Every Time monitors may not be shown at this time because these monitors run on every interval)" 
+    write_in_logfile_and_on_console "$MONITORS" 
+  fi
+}
+
+show_java_heap()
+{
+  cd $CAV_MON_HOME/bin
+  JAVA_HEAP_DUMP=`ls *.phd 2>/dev/null`
+  if [ "XX$JAVA_HEAP_DUMP" = "XX" ];then
+    write_in_logfile_and_on_console "No java heap dump found." 
+  else
+    write_in_logfile_and_on_console "Following java heap dump found:" 
+    write_in_logfile_and_on_console "$JAVA_HEAP_DUMP" 
+  fi
+}
+
+show_cmon_pid()
+{
+  get_running_pid
+  if [ "X$PID" != "X" ];then
+    write_in_logfile_and_on_console "$PID" 
+  else
+    write_in_logfile_and_on_console "CavMonAgent process is not running" 
+    exit 255
+  fi
+}
+
+set_ps_cmd
+init
+
+#set -e #Must not be used
+
+case "$1" in
+  start)
+    startCmon
+    ;;
+  stop)
+    stopCmon
+    ;;
+  restart|restart_from_cmon|force-reload)
+    write_in_logfile_and_on_console "Restarting $DESC: " 
+    stopCmon
+    startCmon
+    ;;
+  show)
+    show_createserver "running"
+    ;;
+  status)
+    show_createserver "running"
+    ;;
+  version)
+    show_version
+    ;;
+  show_monitors)
+    show_monitors_running
+    ;;
+  java_heap)
+    show_java_heap
+    ;;
+  show_pid)
+    show_cmon_pid
+    ;;
+  *)
+    N=$0
+    echo "Usage: $N {start|stop|restart|restart_from_cmon|show|status|force-reload|version|show_monitors|java_heap|show_pid}" >&2
+    exit 1
+    ;;
+esac
+
+exit 0

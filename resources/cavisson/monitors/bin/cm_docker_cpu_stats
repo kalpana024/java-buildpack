@@ -1,0 +1,197 @@
+#!/bin/bash
+#
+#NAME: cm_docker_cpu_stats
+#PURPOSE: This is a sample dynamic custom monitor to get data from docker memory stats 
+#It parses output of docker info and outputs all data in one line
+#Option - 'Run Once'
+#GDF - cm_docker_cpu_stats.gdf
+#Keyword -
+# DYNAMIC_VECTOR_MONITOR 192.168.1.66 NS cm_docker_cpu_stats.gdf 2 cm_docker_cpu_stats -i 10000 EOC cm_docker_cpu_stats -v
+#
+#Sample Output:
+#           container_name|data
+#            elated_austin|13.51 6.36 0 0 0.00
+#      naughty_brahmagupta|12.71 6.03 0 0 0.00
+#             insane_gates|16.24 8.26 0 0 0.00
+#              cocky_hugle|0.00 0.00 0 0 0.00
+# 
+################################################################################################################################
+
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+INTERVAL_SECS=$MON_FREQUENCY
+set_mon_shell
+
+display_help_and_exit()
+{
+  echo "$1"
+  echo "Usage: cm_docker_cpu_stats [-v <vector_prefix> ] or [-i <Interval>]"
+  echo "-v: option used to get vector list for Command (mpstat -P ALL). Prefix will added before these vector names"
+  echo "-i: used for interval (in seconds)"
+  echo "-X: used for <vector prefix/noprefix>"
+  echo "-L: used for <header/data>"
+  exit -1
+}
+
+show_vectors()
+{
+  for ((i=0;i<${#vector_name_arr[@]};i++))
+  do
+    echo -n "${vector_id_arr[${vector_name_arr[$i]}]}:$vector_prefix${vector_name_arr[$i]} "
+  done
+  echo ""
+}
+
+SYS_SLICE_FOUND=0
+
+check_for_file()
+{
+  if [ "X$FILE_PATH" = "X" ]; then
+    if [ -e "$stats_path/cpu/docker" ];then
+      FILE_PATH_CPU="$stats_path/cpu/docker"
+      FILE_PATH_CPUACCT="$stats_path/cpuacct/docker"
+    elif [ -e "$stats_path/cpu/system.slice" ];then
+      FILE_PATH="$stats_path/cpu/system.slice"
+      SYS_SLICE_FOUND=1
+    fi
+  else
+    if [[ "$FILE_PATH" =~ "system.slice" ]] ;then
+      SYS_SLICE_FOUND=1
+    fi
+  fi
+}
+
+show_data()
+{
+  for ((i=0;i<${#vector_name_arr[@]};i++))
+  do
+    if [ "X${vector_id_arr[${vector_name_arr[$i]}]}" = "X" ]; then
+      vector_id_arr[${vector_name_arr[$i]}]=$index
+      index=`expr $index + 1`
+    fi
+    if [ $SYS_SLICE_FOUND -eq 1 ]; then
+      COMPLETE_FILE_PATH="$FILE_PATH/docker-${id_arr[$i]}*.scope"
+      COMPLETE_FILE_PATH_ACCT="$COMPLETE_FILE_PATH"
+    else
+      COMPLETE_FILE_PATH="$FILE_PATH_CPU/${id_arr[$i]}*" 
+      COMPLETE_FILE_PATH_ACCT="$FILE_PATH_CPUACCT/${id_arr[$i]}*"
+    fi   
+    ls $COMPLETE_FILE_PATH > /dev/null
+
+    if [ $? -eq 0 ];then
+      echo -n "${vector_id_arr[${vector_name_arr[$i]}]}:$vector_prefix${vector_name_arr[$i]}|"
+      cat $COMPLETE_FILE_PATH_ACCT/cpuacct.stat | awk '{print $2}'| tr '\n' ' ' | awk '{printf("%.2f %.2f", $1/100, $2/100)}'
+      echo -n " "
+      cat $COMPLETE_FILE_PATH/cpu.stat | awk '{print $2}' | tr '\n' ' ' | awk '{printf("%d %d %.2f", $1, $2, $3/1000000000)}'
+      echo ""
+    else
+      ns_log_event "Major" "Warning: File not found"
+      echo "${vector_id_arr[${vector_name_arr[$i]}]}:$vector_prefix${vector_name_arr[$i]}|0 0 0 0 0"
+    fi
+  done
+}
+
+
+ls /cgroup >/dev/null 2>&1
+
+if [ $? -eq 0 ];then
+  stats_path="/cgroup"
+else
+  ls /sys/fs/cgroup >/dev/null 2>&1
+  if [ $? -eq 0 ];then
+    stats_path="/sys/fs/cgroup"
+  else
+    echo "cgroup directory not found"
+    exit -1
+  fi
+fi
+
+while getopts i:v:X:L:f:? arg
+do
+  case $arg in
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG
+       ;;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ]; then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    i) INTERVAL_SECS=$OPTARG
+       freq_option="1"
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    f) FILE_PATH=$OPTARG ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ "X$vector_prefix" == "Xnoprefix" ];then
+  vector_prefix=""
+fi
+
+check_for_file
+
+docker ps >/dev/null 2>&1
+if [ $? -ne 0 ];then
+  echo "Unable to run docker ps command"
+  exit -1
+fi
+
+declare -A vector_id_arr
+
+id_arr=($(docker ps | grep -v CONTAINER|awk '{print $1}'))
+vector_name_arr=($(docker ps|grep -v CONTAINER|awk '{print $NF}'))
+
+index=0
+while [ $index -lt ${#vector_name_arr[@]} ]
+do
+ vector_id_arr[${vector_name_arr[$index]}]=$index
+ index=`expr $index + 1`
+done
+
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from iostat command
+  show_vectors
+else #To get data on every specified interval
+  while :
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+    show_data
+    prev_vector=(${vector_name_arr[@]})
+    prev_id=(${id_arr[@]})
+    lib_sleep $INTERVAL_SECS
+    id_arr=($(docker ps | grep -v CONTAINER|awk '{print $1}'))
+    vector_name_arr=($(docker ps|grep -v CONTAINER|awk '{print $NF}'))
+    for((i=0; i<${#prev_id[@]}; i++))
+    do
+      echo ${id_arr[@]} | grep ${prev_id[$i]} >/dev/null 2>&1
+      if [ $? -ne 0 ]; then
+        id_arr[${#id_arr[@]}]=${prev_id[$i]}
+        vector_name_arr[${#vector_name_arr[@]}]=${prev_vector[$i]}
+      fi
+    done
+  done
+fi
+
+exit 0
+

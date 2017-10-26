@@ -1,0 +1,126 @@
+#!/bin/bash
+#
+#NAME: cm_docker_network_stats
+#PURPOSE: This is a sample dynamic custom monitor to get data from docker memory stats 
+#It parses output of docker info and outputs all data in one line
+#Option - 'Run Once'
+#GDF - cm_docker_network_stats.gdf
+#Keyword -
+# DYNAMIC_VECTOR_MONITOR 192.168.1.66 NS cm_docker_network_stats.gdf 2 cm_docker_network_stats -i 10000 EOC cm_docker_network_stats -v
+#
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+INTERVAL_SECS=$MON_FREQUENCY
+
+display_help_and_exit()
+{
+  echo "$1"
+  echo "Usage: cm_docker_network_stats [-v <vector_prefix> ] or [-i <Interval>]"
+  echo "-v: option used to get vector list for Command (mpstat -P ALL). Prefix will added before these vector names"
+  echo "-i: used for interval (in seconds)"
+  echo "-X: used for <vector prefix/noprefix>"
+  echo "-L: used for <header/data>"
+  echo "-f: used to define host proc directory path [By default: /host/proc/net/dev]"
+  exit -1
+}
+
+show_vectors()
+{
+  index=0
+    #ls $HOST_PROC >/dev/null 2>&1
+    if [ -f $HOST_PROC ];then 
+      interface=($(cat $HOST_PROC | grep -v Inter- | grep -v face | awk '{print $1}'| tr -d ':'))
+      for ((j=0;j<${#interface[@]};j++))
+      do
+        echo -n "$j:${interface[$j]} "
+      done
+    else
+      echo "File $HOST_PROC dosen't exists or not a regular file"
+      exit -1
+    fi
+  echo ""
+}
+
+show_data()
+{
+#ls $HOST_PROC >/dev/null 2>&1
+if [ -f $HOST_PROC ];then
+  interface=($(cat $HOST_PROC | grep -v Inter- | grep -v face | awk '{print $1}'| tr -d ':'))
+  for ((j=0;j<${#interface[@]};j++))
+  do
+    echo -n "$j:${interface[$j]}|"
+    cat $HOST_PROC | grep -v Inter- | grep -v face | awk 'FNR == "'"`expr $j + 1`"'" {print $2/1024,$3,$4,$5,$6,$7,$8,$9,$10/1024,$11,$12,$13,$14,$15,$16,$17}'
+    index=`expr $index + 1`
+  done
+else
+  echo "File $HOST_PROC dosen't exists or not a regular file"
+  exit -1
+fi
+}
+ls /cgroup >/dev/null 2>&1
+
+while getopts i:v:X:L:f:? arg
+do
+  case $arg in
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG
+       ;;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ]; then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    i) INTERVAL_SECS=$OPTARG
+       freq_option="1"
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    f) HOST_PROC=$OPTARG
+       ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+
+if [ "X$HOST_PROC" == "X" ];then
+HOST_PROC=/host/proc/net/dev
+fi
+
+if [ "X$vector_prefix" == "Xnoprefix" ];then
+  vector_prefix=""
+fi
+
+declare -A vector_id_arr
+
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from iostat command
+  show_vectors
+else #To get data on every specified interval
+  while :
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+    show_data
+    lib_sleep $INTERVAL_SECS
+  done
+fi
+
+exit 0
+
