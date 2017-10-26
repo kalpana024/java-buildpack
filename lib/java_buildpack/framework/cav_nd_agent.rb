@@ -56,13 +56,11 @@ module JavaBuildpack
       										TIER 		=> ENV['CAV_TIER'],
         									ND_AGENT_JAR 	=> '$PWD/.java-buildpack/cav_nd_agent/lib/ndagent-with-dep.jar',
         									ND_HOME 	=> '$PWD/.java-buildpack/cav_nd_agent',
-										BCI_LOGS	=> ENV['CAV_LOGS'],
+        									BCI_LOGS	=> ENV['CAV_LOGS'],
         									NDC_HOST	=> ENV['CAV_NDC_HOST'],
-        									NDC_PORT	=> ENV['CAV_NDC_PORT'],
-        									CAV_MON_HOME	=> ENV['CAV_MON_HOME'])
+        									NDC_PORT	=> ENV['CAV_NDC_PORT'])
 
-        #ENV['CAV_MON_HOME'] = '$PWD/.java-buildpack/cavisson/monitors'
-       # set java_opts = -Dcom.sun.management.jmxremote,-Dcom.sun.management.jmxremote.port='9990',-Dcom.sun.management.jmxremote.ssl=false,-Dcom.sun.management.jmxremote.authenticate=false,-Djava.rmi.server.hostname='66.220.31.140'
+        #java_opts.add_javaagent(@droplet.sandbox + 'lib/ndmain.jar=time')
 
         #application_name java_opts, credentials
         #tier_name java_opts, credentials
@@ -73,6 +71,7 @@ module JavaBuildpack
         #port java_opts, credentials
         #ssl_enabled java_opts, credentials
       end
+
       private
 
       TIER = 'tier'.freeze
@@ -86,8 +85,6 @@ module JavaBuildpack
       NDC_PORT = 'ndcPort'.freeze
 
       BCI_LOGS = 'BCILoggingMode'.freeze
-
-      CAV_MON_HOME = 'CAV_MON_HOME'.freeze
 
       protected
 
