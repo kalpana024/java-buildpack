@@ -1,0 +1,505 @@
+################################################################################################
+# Name  : cm_tcp_states_count 
+# Usage : 
+# Purpose: This shell outputs the count of TCP states, run every time for option 1 & run once for option 2
+# Output : Established SynSent SynRcvd FinWait1 FinWait2 TimeWait Closed CloseWait LastAck Listen           Closing 
+#          2 0 0 0 0 0 0 0 0 13 0         
+# Initial version : Wednesday, September 17 2008 
+# Modification    : Monday, January 12 2009 
+# Author Name     : Arun Nishad 
+
+#NETSTAT_FILE FORMAT -Linux
+
+#tcp        0      0 0.0.0.0:8222                0.0.0.0:*                   LISTEN
+#tcp        0      0 192.168.18.101:45059        192.168.18.104:22           ESTABLISHED
+#tcp        0      0 :::6880                     :::*                        LISTEN
+
+#NETSTAT_FILE FORMAT- SunOS
+#159.37.45.143.35025  159.37.45.143.9101   34765      0 139060      0  ESTABLISHED
+#159.37.45.143.9101   159.37.45.143.35025  139060      0 139060      0 ESTABLISHED
+#      *.*                  *.*                0      0 49152      0 IDLE
+
+#In linux there are total 11 states but in SunOS there are 13 states
+#BOUND, IDLE are not availabe in linux and one state name differ
+#Linux: SYN_RECV
+#SunOS: SYN_RECEIVED
+#SunOS states
+#>> BOUND Bound, ready to connect or listen.
+#CLOSED Closed. The socket is not being used.
+#CLOSING Closed, then remote shutdown; awaiting acknowledgment.
+#CLOSE_WAIT Remote shutdown; waiting for the socket to close.
+#ESTABLISHED Connection has been established.
+#FIN_WAIT_1 Socket closed; shutting down connection.
+#FIN_WAIT_2 Socket closed; waiting for shutdown from remote.
+#>> IDLE Idle, opened but not bound.
+#LAST_ACK Remote shutdown, then closed; awaiting acknowledgment.
+#LISTEN Listening for incoming connections.
+#>>SYN_RECEIVED Initial synchronization of the connection under way.
+#SYN_SENT Actively trying to establish connection.
+#TIME_WAIT Wait after close for remote shutdown retransmission.
+###############################################################################
+
+DEBUG=0
+LOCAL=""
+FOREIGN=""
+EXCLUDE=""
+COL=""
+S_COL=""
+OS_NAME=`uname`
+IN_IP_PORT=""
+IN_IP=""
+IN_PORT=""
+EX_IP=""
+EX_IP_PORT=""
+EX_PORT=""
+IP_PORT=""
+IP_ONLY=""
+PORT_ONLY=""
+PID="$$"
+flag=0
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh 
+
+NETSTAT_FILE=$CAV_MON_TMP_DIR/cm_tcp_states_count_"$MON_TEST_RUN"_"$VECTOR_NAME".inp
+INTERVAL_SECS=$MON_FREQUENCY
+
+DELAY=0
+
+#Calculate OS architecture in order to set value of MAX_UNSIGNED_LONG for 32 bits CPU architecture / 64 bits CPU architecture.
+get_os_arch_data_model
+
+NUM_STATES=11
+
+ESTABLISHED=0
+SYN_SENT=1
+#SYN_RCVD=2 #bug 3127
+SYN_RECV=2 
+#SunOS
+SYN_RECEIVED=2
+FIN_WAIT_1=3
+FIN_WAIT_2=4
+TIME_WAIT=5
+CLOSED=6
+CLOSE_WAIT=7
+LAST_ACK=8
+LISTEN=9
+CLOSING=10
+
+# Added for SunOS but should not be outputed as these are not in GDF
+BOUND=11
+IDLE=12
+
+set_ps_cmd()
+{
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    NETSTAT_CMD_FOR_DATA="netstat -na -P tcp -f inet | tail +5"
+    S_COL=7
+  elif [ "X$OS_NAME" = "XHP-UX" ]; then
+    NETSTAT_CMD_FOR_DATA="netstat -na"
+    S_COL=6
+  else #Linux,AIX
+    NETSTAT_CMD_FOR_DATA="netstat -nat" 
+    S_COL=6
+  fi
+}
+
+#Set the netstat command for Linux/AIX/SunOS
+set_netstat_cmd()
+{
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    #we are assuming that data will start from 5th line
+    if [ "X$LOCAL" != "X" ]; then
+      COL=1
+      tcp_stat_core_command 
+    elif [ "X$FOREIGN" != "X" ]; then
+      COL=2
+      tcp_stat_core_command 
+    else 
+    NETSTAT_CMD="$NETSTAT_CMD_FOR_DATA | awk '{ if(NF == 7) print \$7}' | sort | uniq -c"
+    fi
+  else #Linux,AIX,HP-UX
+    if [ "X$LOCAL" != "X" ]; then
+      COL=4
+      tcp_stat_core_command  
+    elif [ "X$FOREIGN" != "X" ]; then 
+      COL=5  
+      tcp_stat_core_command 
+    else
+      if [ "X$OS_NAME" = "XHP-UX" ]; then
+        NETSTAT_CMD="$NETSTAT_CMD_FOR_DATA | awk '/^tcp/ { if(NF == 6) print \$6}' | sort | uniq -c"
+      else
+        NETSTAT_CMD="$NETSTAT_CMD_FOR_DATA | awk '/^tcp/ { print \$6 | \"sort\"}' | uniq -c"
+      fi
+    fi
+  fi
+}
+
+
+set_ip_port()
+{
+  OPT="$*"
+  TEMP_ARG=`echo $OPT | sed 's/,/ /g'`
+  for tok in $TEMP_ARG
+  do
+    if [ "X$OS_NAME" = "XSunOS" ]; then
+      NUM_F=`echo $tok | nawk -F'[.:]' '{print NF}'`  #nawk because awk did not support multiple field separators on SunOS.
+    else
+      NUM_F=`echo $tok | awk -F'[.:]' '{print NF}'`
+    fi
+
+    if [ $NUM_F = "5" ];then
+       IP_PORT=$IP_PORT$tok,
+    elif [ $NUM_F = "4" ];then
+       IP_ONLY=$IP_ONLY$tok,
+    elif [ $NUM_F = "2" ];then
+       PORT_ONLY=$PORT_ONLY$tok,
+    else
+       echo "Invalid format for $tok"
+       exit 1
+    fi
+  done
+}
+
+tcp_stat_core_command()
+{
+  
+  if [ \( "X$LOCAL" != "X" -o "X$FOREIGN" != "X" \) -a "X$EXCLUDE" = "X"  ]; then
+    NETSTAT_CMD="$NETSTAT_CMD_FOR_DATA | $AWK_CMD -v inipport=$IN_IP_PORT -v in_ip=$IN_IP  -v in_port=$IN_PORT -v id=$COL -v status=$S_COL '{
+               count=split(\$id,arr,\"[.:]\");
+               if(count==5){
+         if( id ==1 || id ==2)
+                 IPPORT=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4]\".\"arr[5];
+         else
+                 IPPORT=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4]\":\"arr[5]; 
+               IP=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4];
+               PORT=arr[5];
+               if(match(inipport,IPPORT)||match(in_ip,IP)||match(in_port,PORT))
+                 print \$status;
+               }}' | uniq -c"
+
+  #echo "NETSTAT_CMD1="$NETSTAT_CMD
+  elif [ \( "X$LOCAL" != "X" -o "X$FOREIGN" != "X" \) -a "X$EXCLUDE" != "X" ]; then
+    NETSTAT_CMD="$NETSTAT_CMD_FOR_DATA | $AWK_CMD -v inipport=$IN_IP_PORT -v in_ip=$IN_IP $LIST -v in_port=$IN_PORT  -v exipport=$EX_IP_PORT -v ex_ip=$EX_IP -v ex_port=$EX_PORT -v id=$COL -v status=$S_COL '{
+                                             count=split(\$id,arr,\"[.:]\");
+                                             if(count==5){
+               if( id ==1 || id ==2)
+                              IPPORT=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4]\".\"arr[5];
+                           else
+                                                IPPORT=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4]\":\"arr[5];
+               IP=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4];
+                                             PORT=arr[5];
+                           if(match(inipport,IPPORT)||match(in_ip,IP)||match(in_port,PORT))
+                             if(!(match(exipport,IPPORT)||match(ex_ip,IP)||match(ex_port,PORT)))
+                                                     print \$status 
+                             }}' | uniq -c"
+  elif [ \( "X$LOCAL" = "X" -a "X$FOREIGN" = "X" \) -a "X$EXCLUDE" != "X" ]; then
+    NETSTAT_CMD="$NETSTAT_CMD_FOR_DATA | $AWK_CMD -v exipport=$EX_IP_PORT -v ex_ip=$EX_IP -v ex_port=$EX_PORT -v id=$COL -v status=$S_COL '{
+                                             count=split(\$id,arr,\"[.:]\");
+                                             if(count==5){
+               if( id ==1 || id ==2)
+                                               IPPORT=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4]\".\"arr[5];
+                                             else
+                                               IPPORT=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4]\":\"arr[5];
+            IP=arr[1]\".\"arr[2]\".\"arr[3]\".\"arr[4];
+                                             PORT=arr[5];
+                           if(!(match(exipport,IPPORT)||match(ex_ip,IP)||match(ex_port,PORT)))
+                                                     print \$status 
+                             }}' | uniq -c"
+ 
+    #echo "NETSTAT_CMD2="$NETSTAT_CMD
+  fi
+}
+
+chk_opt()
+{ 
+  if [ "X$LOCAL" != "X" -a "X$FOREIGN" != "X" ]; then
+    Usage
+  elif [ "X$FOREIGN" = "X" -a  "X$LOCAL" = "X" -a "X$EXCLUDE" != "X" ]; then
+    Usage
+  #elif [ "X$FOREIGN" = "X" -a "X$EXCLUDE" != "X" ]; then
+  #  echo "here!"
+  #  Usage
+  fi 
+}
+
+Usage()
+{ 
+  echo "Usage:" 
+  echo "cm_tcp_states_count [ -l | -f \"comma separated include list\" ][-e \"comma separated exclude list\"] [-i \"time in milliseconds\"]"
+  echo " -i for interval."
+  echo " -l for local IP/Port."
+  echo " -f for foreign IP/Port."
+  echo " -e to exclude IP/Port from include local/foreign list."
+  echo "E.g."
+  echo "cm_tcp_states_count -f 192.168.1.224,64.13.161.61:443 -e :443"
+  echo "Note : enclose Ip/Port list in quotes ( \" \" )  , if space nearby commas."
+  echo  "E.g."
+  echo "cm_tcp_states_count -f \"192.168.1.224 , 64.13.161.61:443\" -e \":443 ,:111\" "     
+  exit -1
+}
+
+reset_array()
+{
+  i=0
+  #while [ $i -lt 11 ]
+  while [ $i -lt 13 ] #We have to store the total 13 state[including solaris]
+  do
+    TCP_STATS_COUNT[i]=0
+    i=`expr $i + 1`
+  done
+}
+
+get_count_for_netstat()
+{
+  #netstat -nat | grep ^tcp | awk '{ if(NF = 6) print $6}' >$NETSTAT_FILE
+  #echo NETSTAT_CMD=$NETSTAT_CMD
+  #$NETSTAT_CMD | $CMD2 | $CMD3 >$NETSTAT_FILE 2>/dev/null
+  eval $NETSTAT_CMD >$NETSTAT_FILE 2>/dev/null
+  if [ $? != 0 ];then
+    error_log "Error in the execution of the command $NETSTAT_CMD"
+    exit 1
+  fi
+
+  reset_array
+  while read VALUE STATE_NAME
+  do
+    TCP_STATS_COUNT[$STATE_NAME]=`expr ${TCP_STATS_COUNT[$STATE_NAME]} + $VALUE`
+  done < $NETSTAT_FILE 
+}
+
+show_output()
+{
+  j=0
+  # Do not print more then 11 states
+  while [ $j -lt $NUM_STATES ]
+  do
+    printf "${TCP_STATS_COUNT[$j]} " 
+    j=`expr $j + 1`
+  done
+  echo ""
+}
+
+error_log()
+{
+    echo "Error: $*"
+    echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+} 
+
+debug_log()
+{   
+    if [ "X$DEBUG" = "X0" ]; then
+      return
+    else
+      echo "Error: $*"
+      echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+    fi
+} 
+
+set_error_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_tcp_states_count_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_tcp_states_count_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  else
+    DEBUG_LOG_FILE="/tmp/cm_tcp_states_count_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="/tmp/cm_tcp_states_count_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+convert_interval_into_secs()
+{
+  #to indicate interval is user defined
+  flag=1
+  #changing into seconds
+   if [ "$INTERVAL_SECS" -lt 1000 ];then
+      INTERVAL_SECS=`expr $INTERVAL_SECS \* 1000`
+   fi
+
+  INTERVAL_SECS=`expr $INTERVAL_SECS / 1000`
+}
+
+#############################################################################################
+
+while getopts i:d:l:f:e:D? c  2>/dev/null
+do
+  case $c in
+    i) INTERVAL_SECS=$OPTARG      #has default 60000 msec
+       convert_interval_into_secs;;
+    d) DELAY=0
+       ns_log_event "Warning" "-d option is no longer supported." ;;
+    l) LOCAL=$OPTARG;;
+    f) FOREIGN=$OPTARG;;
+    e) EXCLUDE=$OPTARG
+      ;;
+    D) DEBUG=1;;
+    ?) Usage ;;
+    *) Usage ;;
+  esac
+done
+
+debug_log "TCP State count started."
+set_error_log_file
+
+#when MON_FREQUENCY is less than 60 set it to 60 secs
+#flag is to check interval is not user defined
+if [ $INTERVAL_SECS -lt 60 -a $flag -ne 1 ];then
+  INTERVAL_SECS=60
+fi
+
+# To improve performance, monitor is coded using C and data is taken from /proc/net/tcp file instead of netstat
+# C version is currently supported for 64 Bit linux only
+# We can use interval less than 60 seconds as this is optimized code
+# Filter for include/exclude is to be done  in next build
+#
+
+#Check if parition idx is not set, then set to 0 so that 0 is passwd to cm_tcp_states_count_linux. Otherwise blank will go and cuase issue
+if [ "X$MON_PARTITION_IDX" == "X" ]; then
+  MON_PARTITION_IDX=0
+fi
+
+# MON_PARTITION_IDX is appended with TRnum in running_test directory in case of continuous monitoring.
+if [ "X$OS_NAME" = "XLinux" -a "X$OS_ARCH_DATA_MODEL" = "X64" -a -f /proc/net/tcp ]; then
+  if [ "X$DEBUG" = "X0" ]; then
+    COMMON_COMMAND="$CAV_MON_HOME/bin/cm_tcp_states_count_linux -t "$MON_TEST_RUN" -p "$CAV_MON_HOME" -P "$MON_PARTITION_IDX" -i "$INTERVAL_SECS""
+  else
+    COMMON_COMMAND="$CAV_MON_HOME/bin/cm_tcp_states_count_linux -t "$MON_TEST_RUN" -p "$CAV_MON_HOME" -P "$MON_PARTITION_IDX" -i "$INTERVAL_SECS" -d" 
+  fi
+
+  #Added filtering in 3.9.1.SysBuild.2
+  if [ \( "X$LOCAL" != "X" -o "X$FOREIGN" != "X" \) -a "X$EXCLUDE" = "X"  ]; then
+    if [ "X$LOCAL" != "X" ]; then
+      $COMMON_COMMAND -l "$LOCAL"
+    else
+      $COMMON_COMMAND -f "$FOREIGN"
+    fi
+    exit $?
+  elif [ \( "X$LOCAL" != "X" -o "X$FOREIGN" != "X" \) -a "X$EXCLUDE" != "X" ]; then
+    if [ "X$LOCAL" != "X" ]; then
+      $COMMON_COMMAND -l "$LOCAL" -e "$EXCLUDE"
+    else
+      $COMMON_COMMAND -f "$FOREIGN" -e "$EXCLUDE"
+    fi
+    exit $?
+  elif [ \( "X$LOCAL" = "X" -a "X$FOREIGN" = "X" \) -a "X$EXCLUDE" != "X" ]; then
+    $COMMON_COMMAND -e "$EXCLUDE"
+    exit $?
+  else
+    $COMMON_COMMAND
+    exit $?
+  fi
+fi
+
+if [ "$INTERVAL_SECS" -lt 60 ];then
+  INTERVAL_SECS=60
+  echo "Interval is less than 60 secs. Forcing to default (60 seconds)."
+fi
+
+#moved this here because for above case we do not need nsi_kill_child_of_monitors
+nohup nsi_kill_child_of_monitors -p $PID -i 10 -f $NETSTAT_FILE 2>/dev/null&
+
+#old code 
+if [ "X$LOCAL" != "X" ];then
+  set_ip_port "$LOCAL"
+  IN_IP_PORT=$IP_PORT
+  IN_IP=$IP_ONLY
+  IN_PORT=$PORT_ONLY
+  if [ "X$EXCLUDE" != "X" ];then
+    set_ip_port "$EXCLUDE"
+    EX_IP="$IP_PORT"
+    EX_IP_PORT="$IP_ONLY"
+    EX_PORT="$PORT_ONLY"
+  fi
+elif [ "X$FOREIGN" != "X" ];then
+  set_ip_port "$FOREIGN"
+  IN_IP_PORT=$IP_PORT
+  IN_IP=$IP_ONLY
+  IN_PORT=$PORT_ONLY
+  if [ "X$EXCLUDE" != "X" ];then
+    set_ip_port "$EXCLUDE"
+    EX_IP="$IP_PORT"
+    EX_IP_PORT="$IP_ONLY"
+    EX_PORT="$PORT_ONLY"
+  fi
+elif [ "X$EXCLUDE" != "X" ];then
+  set_ip_port "$EXCLUDE"
+  EX_IP="$IP_PORT"
+  EX_IP_PORT="$IP_ONLY"
+  EX_PORT="$PORT_ONLY"
+fi
+
+# Setting NETSTAT_CMD_FOR_DATA depending upon OS.
+set_ps_cmd
+
+#Must be called at the start to set the netstat command
+set_netstat_cmd
+#Must set debug/error log file in the beginning
+
+if [ "XX$MON_OPTION" = "XX" ]; then
+  MON_OPTION=2
+fi
+
+
+
+
+#DELAY=`expr $DELAY / 1000`
+
+#echo "Established SynSent SynRcvd FinWait1 FinWait2 TimeWait Closed CloseWait LastAck Listen Closing" 
+
+#We will remove option 1 later
+if [ $MON_OPTION = 1 ];then      #Run every time
+  get_count_for_netstat
+  show_output
+  rm -f $NETSTAT_FILE
+elif [ $MON_OPTION = 2 ];then    #Run Once 
+  #lib_sleep $INTERVAL_SECS                 #Because first sample comes after freq given if not given default 10 second
+  while true;
+  do
+# This check is for SUN OS, Because in SUN OS `date +%s` command is not supported so we take default value of time stamp TIME_STAMP=0. We will fix it later.
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+
+    if [ "X$OS_NAME" != "XSunOS" ]; then  
+      TIME_STAMP1=`date +%s`
+    fi
+    get_count_for_netstat
+    show_output
+    rm -f $NETSTAT_FILE
+      
+    if [ "X$OS_NAME" != "XSunOS" ]; then 
+      TIME_STAMP2=`date +%s`
+      TIME_STAMP=`expr $TIME_STAMP2 - $TIME_STAMP1`
+    else
+      TIME_STAMP=0    # For SUN OS
+    fi
+    if [ $DELAY = 0 ] ;then
+      TIME_STAMP=`expr $INTERVAL_SECS - $TIME_STAMP`    
+    else
+      TIME_STAMP=`expr $DELAY - $TIME_STAMP`
+    fi
+    if [ $TIME_STAMP -le 0 ];then  #Dont run immedaitely put a forced delay of 10 sec 
+      TIME_STAMP=10000
+      ns_log_event "Warning" "Monitor is called so frequently so introducing a force delay of $TIME_STAMP ms."
+      #continue 
+    fi
+    lib_sleep $TIME_STAMP 
+  done
+else
+  echo "Error: $0 is configured neither Run Every Time nor Run Once."
+  exit -1
+fi

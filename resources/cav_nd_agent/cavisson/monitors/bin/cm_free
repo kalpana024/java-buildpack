@@ -1,0 +1,58 @@
+# Name - cm_free
+# Purpose - This is a sample custom monitor to get data from free command
+# It parses output of free and outputs memory status in one line
+# Option - 'Run Every Time'
+# GDF - cm_free.gdf in netstorm machine ($NS_WDIR/samples)
+#       Copy it to $NS_WDIR/sys to use this GDF file
+# Keyword -
+# CUSTOM_MONITOR /opt/cavisson/monitors/samples/cm_free cm_free.gdf 1
+#
+# free command output -
+#[netstorm@netstorm1 archana]$ free
+#             total       used       free     shared    buffers     cached
+#Mem:       1033284     528496     504788          0      42616     247284
+#-/+ buffers/cache:     238596     794688
+#Swap:      2031608          0    2031608
+
+# Custom Monitor Output -
+#1033284 528496 504788 0 42616 247284
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+INTERVAL_SECS=$MON_FREQUENCY
+
+process_data()
+{
+  isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+  free |awk ' {if(NR == 2){printf("%.3f %.3f %.3f %.3f %.3f %.3f\n", $2/1024, $3/1024, $4/1024, $5/1024, $6/1024, $7/1024)}}'
+}
+
+if [ "X$MON_OPTION" = "X1" ]; then
+  process_data
+  exit 0
+else
+  while :
+  do
+    process_data
+    sleep $INTERVAL_SECS
+  done
+fi
+

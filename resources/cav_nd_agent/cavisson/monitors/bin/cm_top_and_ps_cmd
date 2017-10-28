@@ -1,0 +1,40 @@
+# Name:   cm_top_and_ps_cmd 
+#         This monitor will run "top" and "ps -lef" command.
+# Author: Prachi
+   
+TOP_FILE=top_and_ps.out
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+export CAV_MON_HOME
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+              
+run_top_and_ps()
+{
+  top -b -n 1 >$CAV_MON_TMP_DIR/$TOP_FILE 
+  ps -lef >>$CAV_MON_TMP_DIR/$TOP_FILE
+ 
+  cd $CAV_MON_TMP_DIR
+  SIZE=`du -b $TOP_FILE | awk '{print $1}'`
+  echo "FTPFile:$TOP_FILE:$SIZE:a+"
+  cat $TOP_FILE
+  echo "CheckMonitorStatus:Pass"
+}
+
+######################################################################################################################
+
+rm -rf $CAV_MON_TMP_DIR/$TOP_FILE   #remove existing file
+
+run_top_and_ps          #run command
+
+ns_check_mon_pass_and_exit #exit status

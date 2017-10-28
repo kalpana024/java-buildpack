@@ -1,0 +1,104 @@
+# Name    : cm_df_test
+# Purpose : To create tmp_data_file, for check cm_df
+# Usage   :
+	#  cm_create_file [-i <Interval>] and [-s <Size in KB>] and [-n <Number>] and [-d <Delete time>] or [-p <path>]
+	#  -i: used for interval (in seconds)
+	#  -s: Size of file (in KB)
+	#  -n: Number of files 
+	#  -d: Delete time (in seconds)
+	#  -p: path, where file is cteated (by defoult is current path) 
+# For example:
+	# cm_df_test -i 1 -s 2 -n 10 -d 20 (To create file on current path)
+	# cm_df_test -i 1 -s 2 -n 10 -d 20 -p /tmp/ (To create file on paricular path)
+
+#Set CAV_MON_HOME to allow testing from command line
+
+display_help_and_exit()
+{
+  echo "Error: Incorrect Usage!"
+  echo "Usage:"
+  echo "cm_create_file [-i <Interval>] and [-s <Size in KB>] and [-n <Number>] and [-d <Delete time>] or [-p <path>]"
+  echo "-i: used for interval (in seconds)"
+  echo "-s: Size of file (in KB)"
+  echo "-n: Number of files "
+  echo "-d: Delete time (in seconds)"
+  echo "-p: path, where file is cteated (by defoult is current path) "
+  exit -1
+}
+
+DELAY=""
+SIZE=""
+Path=""
+NUMBER=""
+DELETE_TIME=""
+FILE_NAME=""
+#buf="AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+
+function genrate_file()
+{
+  for(( i = 0; i < $NUMBER;))
+  do
+    lib_sleep $DELAY
+    FILE_NAME="${Path}/tmp_data_file_${Pid}_${i}"
+    #echo "FILE_NAME = $FILE_NAME"
+    #for (( j = 0; j < $SIZE;))
+    #do
+    #  echo $buf >> "$FILE_NAME"
+    #  j=`expr $j + 1`
+    #done
+    dd if=/dev/zero of=$FILE_NAME bs=1K count=$SIZE 2>> /dev/null
+    echo "File creted........... $FILE_NAME"
+    i=`expr $i + 1`
+  done
+}
+
+function delete_file()
+{
+  for(( i = 0; i < $NUMBER;))
+  do
+    FILE_NAME="${Path}/tmp_data_file_${Pid}_${i}"
+    echo "Remove file.......... $FILE_NAME"
+    rm -f "$FILE_NAME"
+    i=`expr $i + 1`
+  done
+}
+#if [ "X$#" = "X0" ];then
+#  display_help_and_exit
+#  exit -1
+#fi
+
+while getopts i:s:p:n:d: arg
+do
+  case $arg in
+    i) DELAY=$OPTARG
+       echo $DELAY | grep '^[0-9]*$' 2>&1 >/dev/null 
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    s) SIZE=$OPTARG
+       ;;
+    p) Path=$OPTARG
+       ;;
+    n) NUMBER=$OPTARG
+       ;;
+    d) DELETE_TIME=$OPTARG
+       ;;
+#    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+if [ "X$DELAY" = "X" -o "X$SIZE" = "X" -o "X$NUMBER" = "X" -o "X$DELETE_TIME" = "X" ];then
+    display_help_and_exit
+fi
+if [ "X$Path" = "X" ];then
+  Path=`pwd`
+fi
+ Pid=$$
+ 
+  genrate_file
+  lib_sleep $DELETE_TIME
+  delete_file
+
+exit 0

@@ -1,0 +1,146 @@
+# Name - cm_uptime
+# Purpose - This is a sample custom monitor to get data from uptime command
+# It parses output of uptime and outputs Load avergae data in one line
+# Option - 'Run Every Time'
+# GDF - cm_uptime.gdf in netstorm machine ($NS_WDIR/samples)
+#       Copy it to $NS_WDIR/sys to use this GDF file
+# Keyword -
+# CUSTOM_MONITOR /opt/cavisson/monitors/samples/cm_uptime cm_uptime.gdf 1
+#
+# uptime command output -
+#[netstorm@netstorm1 src]$ uptime
+# 22:45:57 up 4 days, 14:59:43, 5 user, load average: 0.11, 0.22, 0.33
+# Custom Monitor Output - first 3 fields are load average, & last two fields are days & users
+# 11.00 22.00 33.00 4.625 5
+
+#uptime | cut -d" " -f10,11,12,13,14|cut -d" " -f3,4,5| awk -F"," '{printf("%3.2f %3.2f %3.2f\n", $1 * 100, $2 * 100, $3 * 100)}'
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+export CAV_MON_HOME
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+INTERVAL_SECS=$MON_FREQUENCY
+
+CURRENT_OS=`uname`
+
+#mthd returns the time in days(fraction)
+# 17:39:42 up 19 days, 22:13, 10 users,  load average: 0.00, 0.05, 0.09
+# 17:39:42 up 19 days, 18 min, 10 users,  load average: 0.00, 0.05, 0.09
+# Arg - uptime part which in min or hh:mm or hh:mm:ss format
+get_time_in_day()
+{
+   COUNT=`echo $1 | awk -F":" '{print NF}'`
+
+   if [ $COUNT -eq 1 ];then
+     TIME_STR=`echo "00:$1:00"`
+   elif [ $COUNT -eq 2 ];then
+     TIME_STR=`echo "$1:00"`
+   else
+     TIME_STR=$1
+   fi
+
+   echo $TIME_STR | awk -F":" '{printf ("%3.3f", ($1/24) + ($2/(24*60)) + $3/(24*60*60))}'
+}
+
+
+process_open_files_stat()
+{
+  if [ ! -f /proc/sys/fs/file-nr ];then
+    echo "0 0 0"
+    return
+  fi
+  open_files_count_and_max=($(cat /proc/sys/fs/file-nr))
+  open_files_count=${open_files_count_and_max[0]}
+  max_open_files_count=${open_files_count_and_max[2]}
+
+  #LSOF_OUTPUT=(`lsof -n -F t | sed '/^p[0-9]/d; s/^t//' | sort | uniq -c`)
+  
+  #i=0
+  #open_files_count=0
+  #while [ $i -lt ${#LSOF_OUTPUT[@]} ]
+  #do
+  #  open_files_count=`expr $open_files_count + ${LSOF_OUTPUT[$i]}`
+  #  i=`expr $i + 2`
+  #done
+
+  if [ $BC_AVAILABLE -eq 1 ];then
+    percentage_open_files=`echo "scale=3;$open_files_count*100/$max_open_files_count"| bc`
+  else
+    percentage_open_files=`awk -v "var1=$open_files_count" -v "var2=$max_open_files_count" 'BEGIN{printf "%.3f", ((var1/var2)*100)}'`
+  fi
+  echo "$max_open_files_count $open_files_count $percentage_open_files"
+}
+
+
+process_data()
+{
+  CMD_OUTPUT=`uptime`
+  FIELD_1=`echo $CMD_OUTPUT | awk -F"," '{print $1}'`
+  FIELD_2=`echo $CMD_OUTPUT | awk -F"," '{print $2}'`
+
+  TEMP=`echo $FIELD_1 | awk '{print $3}'`
+  IS_DAYS=`echo $TEMP | grep -c ":"`
+
+  if [ $IS_DAYS -eq 0 ];then
+    DAYS=$TEMP
+    TIME=`get_time_in_day $FIELD_2`
+  else
+    DAYS=0
+    TIME=`get_time_in_day $TEMP`
+  fi
+  
+  if [ $BC_AVAILABLE -eq 1 ];then
+    DAYS=`echo "$DAYS + $TIME" | bc`
+  else
+    DAYS=`awk -v "var1=$DAYS" -v "var2=$TIME" 'BEGIN{printf "%.3f", (var1 + var2)}'`
+  fi 
+
+  DAYS=`printf "%3.3f" $DAYS`
+
+  #Changes done by Prachi on 12 september 2012.
+  #On SunOS, awk only considers a single character i.e. if awk -F"user" then it will take only awk -Fu (double quotes and multiple characters is not supported) hence changes awk to nawk and "" to ''
+  if [ "X$CURRENT_OS" = "XLinux" -o "X$CURRENT_OS" = "XAIX" -o "X$CURRENT_OS" = "XHP-UX" ];then
+    USRS=`echo $CMD_OUTPUT | awk -F"user" '{print $1}' | awk '{print $NF}'`
+    LOAD_AVG=`echo $CMD_OUTPUT | awk -F"load average:" '{print $2}' | awk -F"," '{print $1""$2""$3}'`
+  elif [ "X$CURRENT_OS" = "XSunOS" ];then
+    USRS=`echo $CMD_OUTPUT | nawk -F'user' '{print $1}' | awk '{print $NF}'`
+    LOAD_AVG=`echo $CMD_OUTPUT | nawk -F'load average:' '{print $2}' | awk -F"," '{print $1""$2""$3}'`
+  fi  
+  
+  echo -n "$LOAD_AVG $DAYS $USRS "
+
+  process_open_files_stat
+}
+
+
+if [ "X$MON_OPTION" = "X1" ]; then
+  RUN_OPTION=run_every_time
+else
+  RUN_OPTION=run_once
+fi
+
+
+if [ "X$RUN_OPTION" = "Xrun_every_time" ]; then
+  process_data
+  exit 0
+else
+  while :
+  do
+    process_data
+    sleep $INTERVAL_SECS
+  done
+fi
+

@@ -1,0 +1,314 @@
+#!/bin/bash
+# Name : cm_file_stats
+# Purpose : To get last modification time and size of the file
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+export CAV_MON_HOME
+VECTOR_FLAG=0
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+INTERVAL_SECS=$MON_FREQUENCY
+DEBUG=0
+ID=0
+declare -A id_array
+declare -A file_display_name
+
+debug_log()
+{
+  if [ $DEBUG -eq 1 ];then
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+set_debug_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_file_stats_"$MON_TEST_RUN"_debug.log"
+  else
+    DEBUG_LOG_FILE="/tmp/cm_file_stats_"$MON_TEST_RUN"_debug.log"
+    debug_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+set_debug_log_file
+
+#create_array_of_files()
+#{
+#  FILE_AND_DIR_LIST=`echo "$file_list"`
+#
+#  for dir in $dir_list
+#  do
+#    if [ ! -d $dir ];then
+#      continue
+#    fi
+#    list_without_base=($(ls -p $dir | grep -v /))
+#    FILE_AND_DIR_LIST="$FILE_AND_DIR_LIST`echo ${list_without_base[@]/#/$dir}` "
+#    FILE_AND_DIR_LIST_ARRAY=($(echo $FILE_AND_DIR_LIST))
+#  done
+#}
+
+chk_and_del_vectors()
+{
+
+  DELETE_FILE=""
+  i=0
+  j=0
+  #for((i=0;i<${#ARRAY_OF_PREV_FILES[@]};i++))
+  #do
+  #  MATCH_FLAG=0
+  #  for((j=0;j<${#FILE_AND_DIR_LIST_ARRAY[@]};j++))
+  #  do
+  #    if [ "X${ARRAY_OF_PREV_FILES[$i]}" = "X${FILE_AND_DIR_LIST_ARRAY[$j]}" ]; then
+  #      MATCH_FLAG=1
+  #      break;
+  #    fi
+  #  done
+
+  #  if [ $MATCH_FLAG -eq 0 ];then
+  #    vector_id="${id_array[${ARRAY_OF_PREV_FILES[$i]}]}:"
+  #    if [ "XX$vector_prefix" != "XX" ]; then
+  #      echo "$vector_id""${vector_prefix}_${file_display_name[${ARRAY_OF_PREV_FILES[$i]}]}|0 0"
+  #    else          
+  #      echo "$vector_id""${file_display_name[${ARRAY_OF_PREV_FILES[$i]}]}|0 0"
+  #    fi
+  #    DELETE_FILE="${DELETE_FILE}`echo -n ${vector_id}${file_display_name[${ARRAY_OF_PREV_FILES[$i]}]}` "
+  #  fi
+  #done
+
+  #prev_files=($(echo ${ARRAY_OF_PREV_FILES[@]}))
+  for((i=0;i<$ID;i++))
+  do
+    prev_files=${ARRAY_OF_PREV_FILES[$i]}
+
+    if [ "X${ARRAY_OF_PREV_FILES[$i]}" = "X" ];then
+      continue
+    fi
+
+    vector_id=${id_array[${prev_files}]}
+
+    if [ "X${FILE_AND_DIR_LIST_ARRAY[$vector_id]}" = "X" ];then
+      if [ "XX$vector_prefix" != "XX" ]; then
+        echo "${vector_id}:${vector_prefix}_${file_display_name[${prev_files}]}|0 0"
+      else          
+        echo "${vector_id}:${file_display_name[${prev_files}]}|0 0"
+      fi
+      DELETE_FILE="${DELETE_FILE}`echo -n ${vector_id}:${file_display_name[${prev_files}]}` "
+    fi
+  done
+
+  if [ "X$DELETE_FILE" != "X" ]; then
+    echo "DELETE_VECTOR|${DELETE_FILE}"
+  fi
+
+}
+
+copy_orig_array_into_prev()
+{
+  #unset prev array
+  unset ARRAY_OF_PREV_FILES[*]
+
+  #ARRAY_OF_PREV_FILES=($(echo ${FILE_AND_DIR_LIST_ARRAY[@]}))
+  i=0
+  for((i=0;i<$ID;i++))
+  do
+    ARRAY_OF_PREV_FILES[$i]=${FILE_AND_DIR_LIST_ARRAY[$i]}
+  done
+}
+
+
+#Get file status 
+file_status()
+{
+  file_name="$1"
+
+  if [ ! -f "$file_name" ];then 
+    echo "${id_array[$file_name]}:${file_display_name[$file_name]}|0 0"
+    return
+  fi
+  #Get the file information and further extract the required field
+
+  # "ls -la --time-style=full-iso" this command is used to get full time format with date
+  FILE_INFO=`ls -la --time-style=full-iso $file_name`
+
+  
+  if [ "X$FILE_INFO" != "X" ]; then
+    FILE_SIZE=$(echo $FILE_INFO | cut -f5 -s -d' ')
+    DATE_AND_TIME=`echo $FILE_INFO | cut -f6,7 -s -d' '`
+    LAST_MODIFY_DATE_TIME=`date --date="$DATE_AND_TIME" +%s`
+    CURRENT_TIME=`date +%s`
+    if [ $BC_AVAILABLE -eq 1 ];then
+      FILE_MODIFY_DATE_TIME=`echo " $CURRENT_TIME - $LAST_MODIFY_DATE_TIME" | bc ` #seconds
+    else
+      FILE_MODIFY_DATE_TIME=`$AWK_CMD -v "var1=$CURRENT_TIME" -v "var2=$LAST_MODIFY_DATE_TIME" 'BEGIN{print var1 - var2}'`
+    fi
+  fi
+  
+  echo "${id_array[$file_name]}:${file_display_name[$file_name]}|$FILE_MODIFY_DATE_TIME $FILE_SIZE"
+}
+
+#Usage of this tool
+Usage()
+{
+  echo "Usage:"
+  echo "cm_file_stats -f <FILE_NAME> -d <DIR_NAME> -D<DEBUG ENABLE>"
+  echo "e.g cm_file_stats -f </home/netstorm/work/log.txt> -d </home/netstorm/work/> -D"
+  echo "e.g cm_file_stats -f </home/netstorm/work/log.txt> -d </home/netstorm/work/>"
+  echo "Where -f  denotes file name"
+  echo "And -d denotes directory name(give absolute path of directory with / in end)"
+  exit -1
+}
+
+create_array_of_files()
+{
+  unset FILE_AND_DIR_LIST_ARRAY[*]
+ 
+  for((i=0;i<${#FILE_LIST_ARRAY[@]};i++))
+  do
+    file_name="${FILE_LIST_ARRAY[$i]}"
+
+    if [ "X${id_array[$file_name]}" = "X" ];then
+      id_array[$file_name]=$ID
+      ID=`expr $ID + 1`
+    fi
+
+    if [ "X${file_display_name[$file_name]}" = "X" ];then
+      file_display_name[$file_name]=`echo ${FILE_LIST_ARRAY[$i]}| tr " \|$MON_VECTOR_SEPARATOR" "_"`
+    fi  
+    
+    FILE_AND_DIR_LIST_ARRAY[${id_array[$file_name]}]=$file_name
+  done
+
+  for((i=0;i<${#DIR_LIST_ARRAY[@]};i++))
+  do
+    dir=${DIR_LIST_ARRAY[$i]}
+    if [ ! -d "$dir" ];then
+      continue
+    fi
+    list_without_base=($(ls -p "$dir" | grep -v /))
+    for((j=0;j<${#list_without_base[@]};j++))
+    do
+      file="${list_without_base[$j]}"
+      file_name="$dir/$file"
+      
+      if [ "X${id_array[$file_name]}" = "X" ];then
+        id_array[$file_name]=$ID
+        ID=`expr $ID + 1`
+      fi
+      
+      if [ "X${file_display_name[$file_name]}" = "X" ];then
+        file_display_name[$file_name]=`echo "$file_name"| tr " \|$MON_VECTOR_SEPARATOR" "_"`
+      fi
+
+      FILE_AND_DIR_LIST_ARRAY[${id_array[$file_name]}]=$file_name
+    done
+  done
+  debug_log "`echo ${FILE_AND_DIR_LIST_ARRAY[@]}`"
+}
+
+while getopts f:d:i:L:v:X:D? arg
+do
+  case $arg in
+    f) 
+       FILE_LIST_ARRAY[$file_id]=$OPTARG
+       file_id=`expr ${file_id} + 1`
+       ;;
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG
+       ;;
+    d) 
+       DIR_LIST_ARRAY[$dir_id]=$OPTARG
+       dir_id=`expr ${dir_id} + 1`
+       ;; 
+    i) INTERVAL_SECS=$OPTARG;;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ]; then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    D) DEBUG=1;;
+    *) Usage ;;
+    ?) Usage ;;
+   
+  esac
+done
+
+#checking if there is no argument
+if [ $OPTIND -eq 1 ];then
+  echo "Arguments are missing."
+  Usage
+fi
+
+if [ $VECTOR_FLAG -eq 1 ];then
+  echo "Warning: No vectors."
+  exit 0
+fi
+
+while :
+do
+  create_array_of_files
+ 
+  if [ ${#ARRAY_OF_PREV_FILES[@]} -gt 0 -a ${#FILE_AND_DIR_LIST_ARRAY[@]} -gt 0 ]; then
+      chk_and_del_vectors
+  fi 
+
+    #update prev array
+  if [ ${#FILE_AND_DIR_LIST_ARRAY[@]} -gt 0 ]; then
+    copy_orig_array_into_prev
+  fi
+
+  for ((i=0;i<$ID;i++))
+  do
+    file_name=${FILE_AND_DIR_LIST_ARRAY[$i]}
+    if [ "X$file_name" = "X" ];then
+      continue
+    fi
+    if [ ! -f "$file_name" ];then
+      if [ "XX$vector_prefix" != "XX" ]; then
+        echo "${id_array[$file_name]}:${vector_prefix}_${file_display_name[$file_name]}|0 0"
+      else
+        echo "${id_array[$file_name]}:${file_display_name[$file_name]}|0 0"
+      fi
+      continue
+    fi
+    #Get the file information and further extract the required field
+
+    # "ls -la --time-style=full-iso" this command is used to get full time format with date
+    FILE_INFO=`ls -la --time-style=full-iso "$file_name"`
+
+
+    if [ "X$FILE_INFO" != "X" ]; then
+      FILE_SIZE=$(echo $FILE_INFO | cut -f5 -s -d' ')
+      DATE_AND_TIME=`echo $FILE_INFO | cut -f6,7 -s -d' '`
+      LAST_MODIFY_DATE_TIME=`date --date="$DATE_AND_TIME" +%s`
+      CURRENT_TIME=`date +%s`
+      if [ $BC_AVAILABLE -eq 1 ];then
+        FILE_MODIFY_DATE_TIME=`echo " $CURRENT_TIME - $LAST_MODIFY_DATE_TIME" | bc ` #seconds
+      else
+        FILE_MODIFY_DATE_TIME=`$AWK_CMD -v "var1=$CURRENT_TIME" -v "var2=$LAST_MODIFY_DATE_TIME" 'BEGIN{print var1 - var2}'`
+      fi
+    fi
+
+    if [ "XX$vector_prefix" != "XX" ]; then
+      echo "${id_array[$file_name]}:${vector_prefix}_${file_display_name[$file_name]}|$FILE_MODIFY_DATE_TIME $FILE_SIZE"
+    else
+      echo "${id_array[$file_name]}:${file_display_name[$file_name]}|$FILE_MODIFY_DATE_TIME $FILE_SIZE"
+    fi
+    
+  #file_status ${FILE_AND_DIR_LIST_ARRAY[$i]}
+  done
+  lib_sleep $INTERVAL_SECS
+done
+

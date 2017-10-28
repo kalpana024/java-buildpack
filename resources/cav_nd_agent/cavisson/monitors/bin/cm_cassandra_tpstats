@@ -1,0 +1,169 @@
+# Name    - cm_cassandra_tpstats
+# Purpose - This is a dynamic monitor which parses output of nodetool tpstats and outputs all data related to Pool Name only not Message type
+# Option  - 'Run Once'
+# GDF     - cm_cassandra_tpstats.gdf 
+# Keyword -
+#   DYNAMIC_VECTOR_MONITOR 192.168.1.218 TPSTATS cm_cassandra_tpstats.gdf 2 cm_cassandra_tpstats -i 10 EOC cm_cassandra_tpstats -v NS_66_
+#
+# ./bin/nodetool tpstats output -
+#
+# Pool Name                    Active   Pending      Completed   Blocked  All time blocked
+# ReadStage                         0         0             11         0                 0
+# RequestResponseStage              0         0              0         0                 0
+# MutationStage                     0         0              4         0                 0
+# ReadRepairStage                   0         0              0         0                 0
+# ReplicateOnWriteStage             0         0              0         0                 0
+# GossipStage                       0         0              0         0                 0
+# AntiEntropyStage                  0         0              0         0                 0
+# MigrationStage                    0         0              5         0                 0
+# MemtablePostFlusher               0         0            152         0               0
+# FlushWriter                       0         0             13         0                0
+# MiscStage                         0         0              0         0                 0
+# commitlog_archiver                0         0              0         0                 0
+# InternalResponseStage             0         0              0         0                 0
+# HintedHandoff                     0         0              0         0                 0
+#
+# Message type           Dropped
+# RANGE_SLICE                0
+# READ_REPAIR                0
+# BINARY                     0
+# READ                       0
+# MUTATION                   0
+# _TRACE                     0
+# REQUEST_RESPONSE           0
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+INTERVAL_SECS=$MON_FREQUENCY
+VECTOR_FLAG=""
+DEBUG=0
+
+debug_log()
+{
+  if [ $DEBUG -eq 1 ];then
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+set_debug_log_file()
+{
+if [ "XX$CAV_MON_HOME" != "XX" ];then
+  DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_cassandra_tpstats_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+else
+  DEBUG_LOG_FILE="/tmp/cm_cassandra_tpstats_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+  debug_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+fi
+}
+
+show_data()
+{
+  #TODO: currently running command on every interval, but need to run this in background.
+
+  while true
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+
+    $CASSANDRA_PATH/bin/nodetool tpstats |  head -15 | tail -14 | awk -F' ' '{print ($2" "$3" "$4" "$5" "$6" ")}'
+    if [ $? != 0 ];then
+      ns_log_event "Major" "Running command '$CASSANDRA_PATH/bin/nodetool tpstats' failed for thread pool data."
+      return 1
+    fi
+
+    #$CASSANDRA_PATH/bin/nodetool -h $HOST -p $PORT -u $USER -p $PASSWORD tpstats |  head -15 | tail -14 | awk -F' ' '{print ($2" "$3" "$4" "$5" "$6" ")}'
+    #/home/compass-119/apache-cassandra-1.2.8/bin/nodetool tpstats | head -15 | tail -14 | awk -F' ' '{print ($2" "$3" "$4" "$5" "$6" ")}'
+
+    lib_sleep $INTERVAL_SECS
+  done
+}
+
+# This will show all Pool name in single line
+# For example:
+# ./cm_cassandra_tpstats -v NS__
+# NS___ReadStage NS___RequestResponseStage NS___MutationStage NS___ReadRepairStage NS___ReplicateOnWriteStage NS___GossipStage NS___AntiEntropyStage NS___MigrationStage NS___MemtablePostFlusher NS___FlushWriter NS___MiscStage NS___commitlog_archiver NS___InternalResponseStage NS___HintedHandoff 
+show_vectors()
+{
+  if [ "X$vector_prefix" = "Xnoprefix" ]; then 
+    $CASSANDRA_PATH/bin/nodetool tpstats |  head -15 | tail -14 | awk -F' ' '{printf ($1" ")}'
+    out=$?
+  else
+    $CASSANDRA_PATH/bin/nodetool tpstats |  head -15 | tail -14 | awk -F' ' '{print ($1" ")}' | awk '{printf "%s%s ", ENVIRON["vector_prefix"], $1}'
+    out=$?
+  fi
+
+  if [ $? != 0 ];then
+    ns_log_event "Major" "Running command '$CASSANDRA_PATH/bin/nodetool tpstats' failed for thread pool vectors."
+    return 1
+  fi
+
+  #$CASSANDRA_PATH/bin/nodetool -h $HOST -p $PORT -u $USER -p $PASSWORD tpstats |  head -15 | tail -14 | awk -F' ' '{printf ($1" ")}'
+  #./bin/nodetool tpstats | head -15 | tail -14 | awk -F' ' '{printf ($1" ")}'
+  #/home/compass-119/apache-cassandra-1.2.8/bin/nodetool tpstats | head -15 | tail -14 | awk -F' ' '{printf ($1" ")}'
+
+  #/home/compass-119/apache-cassandra-1.2.8/bin/nodetool tpstats | head -15 | tail -14 | awk -F' ' '{print ($1" ")}' | awk '{printf "%s_%s ", ENVIRON["vector_prefix"], $1}'
+  echo ""
+}
+display_help_and_exit()
+{
+  echo "Usage: cm_cassandra_tpstats [-v <vector_prefix> ] or [-i <Interval>] [-H <Hostname>] [-P <Port>] [-C <CASSANDRA PATH>] [-u <USERNAME>] [-p <PASSWORD>]"
+  echo "-i: used for interval (in seconds)"
+  echo "-v: option used to get vector list for Command (nodetool tpstats). Prefix will added before these vector names"
+  echo "-H: used for Hostname"
+  echo "-P: used for Port"
+  echo "-C: used for cassandra path "
+  echo "-u: used for username"
+  echo "-p: used for password"
+  exit -1
+}
+
+set_debug_log_file
+
+while getopts i:v:H:P:C:u:p:D? arg
+do
+  case $arg in
+    i) INTERVAL_SECS=$OPTARG ;;
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG ;;
+    H) HOST=$OPTARG ;;
+    P) PORT=$OPTARG ;;
+    C) CASSANDRA_PATH=$OPTARG ;; 
+    u) USER=$OPTARG ;; 
+    p) PASSWORD=$OPTARG ;;
+    D) DEBUG=1;; 
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+debug_log "cm_cassandra_tpstats monitor started."
+
+#Check installation directory
+if [ ! -d $CASSANDRA_PATH ];then
+  echo "Cassandra Installation Path $CASSANDRA_PATH does not exists."
+  exit 255
+fi
+
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from nodetool tpstats
+  show_vectors
+else #To get data on every specified interval
+  show_data
+fi
+
+debug_log "cm_cassandra_tpstats monitor end."
+
+exit 0

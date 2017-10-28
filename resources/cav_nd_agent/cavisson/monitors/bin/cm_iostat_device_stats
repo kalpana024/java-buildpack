@@ -1,0 +1,165 @@
+# Name - cm_iostat_device_stats (extended device statistics)
+# Purpose - This is a dynamic custom monitor to get data from iostat command for extended device stats
+#           Developed for Solaris only
+# It parses output of iostat and outputs all data in one line per device
+# Option - 'Run Once'
+# GDF - cm_iostat_device_stats.gdf
+#       
+# Keyword -
+#DYNAMIC_VECTOR_MONITOR 192.168.18.82 NS cm_iostat_device_stats.gdf 2 cm_iostat_device_stats -i 10000 EOC cm_iostat_device_stats -v
+# For testing using test cmd use -T option like
+#DYNAMIC_VECTOR_MONITOR 192.168.18.82 NS cm_iostat_device_stats.gdf 2 cm_iostat_device_stats -T -i 10000 EOC cm_iostat_device_stats -T -v
+#
+# iostat command output -
+#[netstorm@netstorm1 src]$ iostat -xn 5
+#                    extended device statistics              
+#    r/s    w/s   kr/s   kw/s wait actv wsvc_t asvc_t  %w  %b device
+#    1.4    4.4   43.5  196.1  0.0  0.0    0.1    7.7   0   1 c2t9d0
+#    1.6    4.5   43.7  196.9  0.0  0.0    0.1    7.2   0   1 c2t10d0
+#    1.4    4.4   43.5  196.1  0.0  0.0    0.1    7.2   0   1 c2t11d0
+#
+# Monitor output
+# For getting vector name
+#cm_iostat_device_stats -v  (one line output with device names separated by space)
+#c2t9d0 c2t10d0 isg-sedaris:/dbexports
+# For getting data
+#cm_iostat_device_stats -i 5000 (One line per device. Each line has 10 fields
+#11  4.7  43.5  196.1  0.0  0.0  0.1  7.7  0  1.1
+#21  4.5  43.7  196.9  0.0  0.0  0.1  7.2  0  1.2
+#31  10.0  90.4  0.0  0.0  0.0  0.2  3.1  0  1.7
+#12  4.7  43.5  196.1  0.0  0.0  0.1  7.7  0  1.1
+#22  4.5  43.7  196.9  0.0  0.0  0.1  7.2  0  1.2
+#32  10.0  90.4  0.0  0.0  0.0  0.2  3.1  0  1.7
+
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+
+INTERVAL_SECS=$MON_FREQUENCY
+VECTOR_FLAG=""
+PID="$$"
+CMD_NAME="iostat -xn"
+
+IOSTAT_OUT_FILE=$CAV_MON_TMP_DIR/iostat.out$$
+
+#trap 'kill %1; rm -f $IOSTAT_OUT_FILE; exit' 1 2 3 4 5
+
+show_data()
+{
+  index=0
+  $CMD_NAME $INTERVAL_SECS  > $IOSTAT_OUT_FILE &
+
+#First sample of iostat comes immediately but data should not be used
+# Give some time so that data is appended to file
+  lib_sleep 2
+
+  nohup $UNIX_SHELL nsi_kill_child_of_monitors -p $PID -i 10 -f $IOSTAT_OUT_FILE 2>/dev/null&
+# This did not work on Solaris. So changed to use cat
+# num_lines=`wc -l $IOSTAT_OUT_FILE | cut -f1 -d ' '`
+  num_lines=`cat $IOSTAT_OUT_FILE|wc -l`
+  num_lines=`expr $num_lines - 2`
+
+  while true
+  do
+    isTestOver $MON_TEST_RUN
+    lib_sleep $INTERVAL_SECS
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+    if [ "X$vector_prefix" = "Xnoprefix" ]; then
+      tail -$num_lines $IOSTAT_OUT_FILE | nawk '{printf FNR-1":"$11"|"$1"  "$2"  "$3"  "$4"  "$5"  "$6"  "$7"  "$8"  "$9"  "$10"\n"}'
+    else
+      tail -$num_lines $IOSTAT_OUT_FILE | nawk '{printf FNR-1":%s"$11"|"$1"  "$2"  "$3"  "$4"  "$5"  "$6"  "$7"  "$8"  "$9"  "$10"\n", ENVIRON["vector_prefix"]}'
+    fi
+    index=`expr $index + 1`
+  done
+}
+
+show_vectors()
+{
+  $CMD_NAME > $IOSTAT_OUT_FILE 
+  num_lines=`cat $IOSTAT_OUT_FILE|wc -l`
+  num_lines=`expr $num_lines - 2`
+
+  if [ "X$vector_prefix" = "Xnoprefix" ]; then
+    Device_List=`tail -$num_lines $IOSTAT_OUT_FILE | nawk '{printf FNR-1":%s ", $11}'`
+  else
+    Device_List=`tail -$num_lines $IOSTAT_OUT_FILE | nawk '{printf FNR-1":%s%s ", ENVIRON["vector_prefix"], $11}'`
+  fi
+
+  echo $Device_List
+  rm -f $IOSTAT_OUT_FILE
+}
+
+display_help_and_exit()
+{
+  echo "Error: Incorrect Usage!"
+  echo "Usage:"
+  echo "iostat [-v] or [-i <Interval>]"
+  echo "-v: option used to get vector list for Command (iostat -xn)"
+  echo "-i: used for interval (in seconds)"
+  exit -1
+}
+
+while getopts i:v:TX:L:? arg
+do
+  case $arg in
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG
+       ;;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ];then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    i) INTERVAL_SECS=$OPTARG
+       INTERVAL_SECS_option="1"
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       
+       if [ "$INTERVAL_SECS" -gt 1000 ];then
+          INTERVAL_SECS=`expr $INTERVAL_SECS / 1000`
+       fi
+       ;;
+    # T stand for testing
+    # To use this option type--
+    #   (i)  cm_iostat_device_stats -T -v for device name
+    #   (ii) cm_iostat_device_stats -T -i 1000(in milisecond) 
+    T) CMD_NAME="./cm_iostat_device_stats.test.sh"
+       ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ "X$VECTOR_FLAG" = "X1" -a "XX$INTERVAL_SECS_option" != "XX" ];then
+    display_help_and_exit
+fi
+
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from iostat command
+  show_vectors
+else #To get data on every specified interval
+  show_data
+fi
+
+rm -f $IOSTAT_OUT_FILE
+
+exit 0

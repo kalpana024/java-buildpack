@@ -1,0 +1,216 @@
+#!/bin/bash
+#
+#NAME: cm_docker_io_stats
+#PURPOSE: This is a sample dynamic custom monitor to get data from docker io stats 
+#It parses output of docker info and outputs all data in one line
+#Option - 'Run Once'
+#GDF - cm_docker_io_stats.gdf
+#Keyword -
+# DYNAMIC_VECTOR_MONITOR 192.168.1.66 NS cm_docker_io_stats.gdf 2 cm_docker_io_stats -i 10000 EOC cm_docker_io_stats -v
+#Sample Output:   Container_name|data
+#                  elated_austin|0.0000 0.0000 0 0
+#            naughty_brahmagupta|0.0000 0.0000 0 0
+#                   insane_gates|0.0000 0.0000 0 0
+#                    cocky_hugle|0.0000 0.0000 0 0
+###################################################################################################################
+
+
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+INTERVAL_SECS=$MON_FREQUENCY
+set_mon_shell
+
+display_help_and_exit()
+{
+  echo "$1"
+  echo "Usage: cm_docker_io_stats [-v <vector_prefix> ] or [-i <Interval>]"
+  echo "-v: option used to get vector list for Command (mpstat -P ALL). Prefix will added before these vector names"
+  echo "-i: used for interval (in seconds)"
+  echo "-X: used for <vector prefix/noprefix>"
+  echo "-L: used for <header/data>"
+  exit -1
+}
+
+show_vectors()
+{
+  for ((i=0;i<${#vector_name_arr[@]};i++))
+  do
+    echo -n "$i:$vector_prefix${vector_name_arr[$i]} "
+  done
+  echo ""
+}
+
+show_data()
+{
+  for ((i=0;i<${#vector_name_arr[@]};i++))
+  do
+    if [ "X${vector_id_arr[${vector_name_arr[$i]}]}" = "X" ]; then
+      vector_id_arr[${vector_name_arr[$i]}]=$index
+      index=`expr $index + 1`
+    fi
+    
+    if [ "X$SYS_SLICE_FLAG" = "X1" ]; then
+      complete_path="$STATS_PATH/docker-${id_arr[$i]}*.scope"
+    else
+      complete_path="$stats_path/blkio/docker/${id_arr[$i]}*"
+    fi
+
+    ls $complete_path/blkio.throttle.io_service_bytes >/dev/null 2>&1
+
+    if [ $? -eq 0 ];then
+      read_arr1=($(cat $complete_path/blkio.throttle.io_service_bytes | sed -n '/Read/p'))
+      write_arr1=($(cat $complete_path/blkio.throttle.io_service_bytes | sed -n '/Write/p'))
+    fi
+
+    if [ ${#read_arr1[@]} -eq 0 ];then
+      read_arr1=( 0 0 0 )
+    fi
+    if [ ${#write_arr1[@]} -eq 0 ];then
+      write_arr1=( 0 0 0 )
+    fi
+
+    ls $complete_path/blkio.throttle.io_serviced >/dev/null 2>&1
+    if [ $? -eq 0 ];then
+      read_arr2=($(cat $complete_path/blkio.throttle.io_serviced |sed -n '/Read/p'))
+      write_arr2=($(cat $complete_path/blkio.throttle.io_serviced |sed -n '/Write/p'))
+    fi
+    if [ ${#read_arr2[@]} -eq 0 ];then
+      read_arr2=( 0 0 0 )
+    fi
+    if [ ${#write_arr2[@]} -eq 0 ];then
+      write_arr2=( 0 0 0 )
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      read_arr1[2]=$(echo "scale=4;${read_arr1[2]}/1048576" | bc)
+      write_arr1[2]=$(echo "scale=4;${write_arr1[2]}/1048576" | bc)
+    else
+      read_arr1[2]=`awk -v "var1=${read_arr1[2]}" 'BEGIN{printf "%.4f", (var1 / 1048576)}'`
+      write_arr1[2]=`awk -v "var1=${write_arr1[2]}" 'BEGIN{printf "%.4f", (var1 / 1048576)}'`
+    fi
+    echo -n "${vector_id_arr[${vector_name_arr[$i]}]}:$vector_prefix${vector_name_arr[$i]}|"
+    printf "%0.4f %0.4f" ${read_arr1[2]} ${write_arr1[2]}
+    echo -n " ${read_arr2[2]} ${write_arr2[2]}"
+    #printf " %0.4f %0.4f" $read_per_sec $write_per_sec
+    printf " %0.4f %0.4f" ${read_arr1[2]} ${write_arr1[2]}
+    echo ""
+
+    read_arr1[2]=0
+    write_arr1[2]=0
+    read_arr2[2]=0
+    write_arr2[2]=0
+  done
+}
+
+
+ls /cgroup >/dev/null 2>&1
+
+if [ $? -eq 0 ];then
+  stats_path="/cgroup"
+else
+  ls /sys/fs/cgroup >/dev/null 2>&1
+  if [ $? -eq 0 ];then
+    stats_path="/sys/fs/cgroup"
+  else
+    echo "cgroup directory not found"
+    exit -1
+  fi
+fi
+
+SYS_SLICE_FLAG=0
+
+while getopts i:v:X:L:p:? arg
+do
+  case $arg in
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG
+       ;;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ]; then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    i) INTERVAL_SECS=$OPTARG
+       freq_option="1"
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    p) STATS_PATH=$OPTARG
+       if [[ "$STATS_PATH" =~ "system.slice" ]]; then
+         SYS_SLICE_FLAG=1
+       else
+         SYS_SLICE_FLAG=0
+       fi
+       ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ "X$STATS_PATH" == "X" ];then
+  if [ -e "$stats_path/blkio/system.slice" ];then
+      FILE_PATH="$stats_path/blkio/system.slice"
+      SYS_SLICE_FOUND=1
+  fi
+fi
+
+
+if [ "X$vector_prefix" == "Xnoprefix" ];then
+  vector_prefix=""
+fi
+
+declare -A vector_id_arr
+
+id_arr=($(docker ps | grep -v CONTAINER|awk '{print $1}'))
+vector_name_arr=($(docker ps|grep -v CONTAINER|awk '{print $NF}'))
+
+index=0
+while [ $index -lt ${#vector_name_arr[@]} ]
+do
+ vector_id_arr[${vector_name_arr[$index]}]=$index
+ index=`expr $index + 1`
+done
+
+sample_no=0
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from iostat command
+  show_vectors
+else #To get data on every specified interval
+  while :
+  do 
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+    show_data
+    prev_vector=(${vector_name_arr[@]})
+    prev_id=(${id_arr[@]})
+    lib_sleep $INTERVAL_SECS
+    id_arr=($(docker ps | grep -v CONTAINER|awk '{print $1}'))
+    vector_name_arr=($(docker ps|grep -v CONTAINER|awk '{print $NF}'))
+    for((i=0; i<${#prev_id[@]}; i++))
+    do
+      echo ${id_arr[@]} | grep ${prev_id[$i]} >/dev/null 2>&1
+      if [ $? -ne 0 ]; then
+        id_arr[${#id_arr[@]}]=${prev_id[$i]}
+        vector_name_arr[${#vector_name_arr[@]}]=${prev_vector[$i]}
+      fi
+    done
+  done
+fi
+
+exit 0
+

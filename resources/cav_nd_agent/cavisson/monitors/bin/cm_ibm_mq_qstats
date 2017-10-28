@@ -1,0 +1,123 @@
+# Name - cm_ibm_mq_qstats (MQ Statistics)
+# Purpose - This is a monitor to get data from xmqqstat for MQ Queue
+# Option - 'Run Once'
+# GDF - cm_ibm_mq_qstats.gdf 
+# Keyword -
+#
+# Usage -m $QMgr -q $QName -i $INTERVAL_SECS 
+
+# We will repalce this by java version later
+#
+# xmqqstat output
+#       MxML      MxQD G P   OIC   OUC     MDC     MEC   UNC       CQD     PQF TQF TQE  QOM    OQTS    OQTL
+# ----------------------------------------------------------------------------------------------------------
+#    4194304       200 E E     0     0       0       0     0         0   0.00%                0.00s   0.00s
+#    4194304       200 E E     0     0       0       0     0         0   0.00%                0.00s   0.00s
+#
+# Custom Monitor Output -
+#4194304 200 0 0 0 10 0 14
+#4194304 200 0 0 0 32 0 46
+
+#This montior needs following jar files
+# com.ibm.xmq.utilities.jar - This was downloaded from internet by Malvika and will be on cmon build
+# com.ibm.mq.jar: - Part of IBM MQ Rpms
+# com.ibm.mq.pcf.jar: - Part of IBM MQ Rpms
+#
+# And following shared library which are part of IBM MQ Rpms :
+#/opt/mqm/java/lib64 (64 Bit)
+# -r-xr-xr-x 1 mqm mqm  57299 Oct 25  2011 libmqjexitstub02.so (This may not not be needed)
+# -r-xr-xr-x 1 mqm mqm 362338 Oct 25  2011 libmqjbnd.so 
+#
+#/opt/mqm/java/lib (32 Bit)
+# -r-xr-xr-x 1 mqm mqm  57299 Oct 25  2011 libmqjexitstub02.so (This may not not be needed)
+# -r-xr-xr-x 1 mqm mqm 362338 Oct 25  2011 libmqjbnd.so
+
+
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+
+INTERVAL_SECS=$MON_FREQUENCY
+
+#export MQ_COMMAND_TOOLS=/opt/cavisson/monitors/custom
+
+IBM_MQ_SHARED_LIB_PATH=/opt/mqm/java/lib64
+
+#export CLASSPATH=/opt/mqm/java/lib/com.ibm.mq.jar:/opt/mqm/java/lib/com.ibm.mq.pcf.jar:$CAV_MON_HOME/lib/com.ibm.xmq.utilities.jar
+
+VECTOR_FLAG=""
+PID="$$"
+XMQQSTAT_OUT_FILE=/tmp/cm_ibm_mq_qstats.out$$
+
+show_data()
+{
+
+  #java -Djava.library.path=$IBM_MQ_SHARED_LIB_PATH -cp /opt/mqm/java/lib/com.ibm.mq.jar:/opt/mqm/java/lib/com.ibm.mq.pcf.jar:$MQ_COMMAND_TOOLS/com.ibm.xmq.utilities.jar:$MQ_COMMAND_TOOLS com.ibm.xmq.utilities.Xmqqstat -m $QMgr -q $QName -i $INTERVAL_SECS -e > $XMQQSTAT_OUT_FILE &
+
+  java -Djava.library.path=$IBM_MQ_SHARED_LIB_PATH com.ibm.xmq.utilities.Xmqqstat -m $QMgr -q $QName -i $INTERVAL_SECS -e > $XMQQSTAT_OUT_FILE &
+
+  #First sample of xmqqstat comes after INTERVAL_SECS
+  nohup $UNIX_SHELL $CAV_MON_HOME/bin/nsi_kill_child_of_monitors -p $PID -i 10 -f $XMQQSTAT_OUT_FILE 2>/dev/null&
+  lib_sleep `expr $INTERVAL_SECS + 1` 
+
+  
+  while true
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+
+    #tail -1 $XMQQSTAT_OUT_FILE | awk  '{printf "%d %d %d %d %.2f %.2f %d %d %.2f\n", $1,$2,$5,$6,$7 / $INTERVAL_SECS ,$8 / $INTERVAL_SECS,$9,$10,$10 / $2 * 100}'
+    tail -1 $XMQQSTAT_OUT_FILE | awk -v div=$INTERVAL_SECS '{printf "%d %d %d %d %.2f %.2f %d %d %.2f\n", $1,$2,$5,$6,$7 / div ,$8/div ,$9,$10,$10 / $2 * 100}'
+
+    lib_sleep $INTERVAL_SECS
+  done
+
+}
+
+
+
+display_help_and_exit()
+{
+  echo "Error: Incorrect Usage!"
+  echo "Usage:"
+  echo "cm_ibm_mq_qstats -m <Queue Manager Name> -q <Queue Name> [-i <Interval>]"
+  echo "-i: used for interval (in seconds). Default is 10 seconds"
+  exit -1
+}
+
+while getopts i:m:q:? arg
+do
+  case $arg in
+    i) INTERVAL_SECS=$OPTARG
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null
+       if [ $? != 0 ];then
+         echo "Invalid INTERVAL_SECSuency argument value"
+         exit -1
+       fi
+       ;;
+    m) QMgr=$OPTARG ;;
+    q) QName=$OPTARG ;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+show_data
+
+exit 0

@@ -1,0 +1,454 @@
+#!/bin/ksh
+#
+##########################################################################
+#Program Name: cm_oracle_sysstat 
+#
+#Discription : This monitor will statistic from oracle database by the view  v$sysstat
+#              describe v$sysstat;
+#              Name                           Null                             Type
+#              STATISTIC#                                                      NUMBER
+#              NAME                                                            VARCHAR2(64)
+#              CLASS                                                           NUMBER
+#              VALUE                                                           NUMBER
+#              STAT_ID                                                         NUMBER
+#
+# http://docs.oracle.com/cd/B28359_01/server.111/b28320/dynviews_3086.htm
+# http://docs.oracle.com/cd/B10500_01/server.920/a90842/ch4.htm#1005650 -> For SqlPlus CLI
+#
+#              STATISTIC#   	NAME    	CLASS   	VALUE    	STAT_ID  
+#                 2	    logons current	  1 	         371	        3080465522
+#                 7	    user calls	          1 	      1013397592	2882015696
+#                 75	    physical reads	  8	      270568253	        2263124246
+#                 86	    physical writes	  8	      60127509	        1190468109
+#                 375	   table scan rows gotte  64	      17576982345	1400824662
+#                 377	   table fetch by rowid	  64	      77498121135	681815839
+#                 612	   OS User time used	  16	           0	        3628421385
+#                 613	   OS System time used	  16	           0	        1159355779
+#
+#Syntax     :  cm_oracle_sysstat <oracle connection parameters> -i <interval in secs> -e <Event Id>
+#              
+#ConnectionName  :   NS1
+#UserName:           readonly
+#pwd:                readonly
+#Hostname:           10.210.153.51  (InstanceName: OR2071S)
+#port         :      1571
+#SID        :        OS2071
+#Output     :  
+#              
+###########################################################################
+
+
+#Set CAV_MON_HOME to allow testing from command line
+#if [ "X$CAV_MON_HOME" = "X" ]; then
+#  if [ -d /opt/cavisson/monitors ];then
+#    export CAV_MON_HOME="/opt/cavisson/monitors"
+#  elif [ -d ~/cavisson/monitors ];then
+#    export CAV_MON_HOME=~/cavisson/monitors
+#  else
+#    echo "CAV_MON_HOME is not set"
+#    exit -1
+#  fi
+#fi
+
+# . $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+DEBUG=0
+INTERVAL=10
+MODE=0
+TEST_MODE=0
+
+export ORACLE_HOME=/prod/prop/orasoft/oracle/product/11.2.0/db11.2.0.2
+
+ns_log_event()
+{
+  VERSION="1.0"
+  SEVERITY="$1"
+  EVENT_MSG="$2"
+
+  #echo "Event:$VERSION:$SEVERITY|$EVENT_MSG"
+}
+
+#Check if test is over or not
+# Argument: Test run number (e.g. 1234)
+# Returns:
+#   0 - Not over
+#   1 - Test is  over
+isTestOver()
+{
+  TEST_RUN=$1
+
+  # This is to allow testing from command line as test may not be running and TEST_RUN is not set
+  if [ "X$TEST_RUN" = "X" ];then
+    # Test is not over
+    return 0
+  fi
+
+  RUNNING_TEST_FILE=$CAV_MON_HOME/logs/running_tests/$TEST_RUN
+
+  if [ ! -f $RUNNING_TEST_FILE ];then
+    # Test is over
+    return 1
+  fi
+
+  # Test is not over
+  return 0
+}
+
+
+set_error_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_oracle_sysstat_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_oracle_sysstat_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  else
+    #DEBUG_LOG_FILE="/tmp/oracle_system_event_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log.$$"
+    #ERROR_LOG_FILE="/tmp/oracle_system_event_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log.$$"
+    DEBUG_LOG_FILE="/tmp/oracle_system_event_debug.log.$$"
+    ERROR_LOG_FILE="/tmp/oracle_system_event_error.log.$$"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+error_log()
+{
+  ns_log_event "Major" "$*" >> $ERROR_LOG_FILE
+  #echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+}
+
+debug_log()
+{
+    if [ "X$DEBUG" = "X0" ]; then
+      return
+    else
+      echo "Debug: $*" >> $DEBUG_LOG_FILE
+#      echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+    fi
+}
+
+
+
+QUERY_OUT_FILE="/tmp/nsi_db_utils.out.$$"
+QUERY_ERR_FILE="/tmp/nsi_db_utils.err.$$"
+TEMP_QUERY_CLAUSE="/tmp/nsi_db_utils.query.$$"
+DEBUG_LEVEL=0
+TMP_FILE="/tmp/nsi_db_utils.tmp.$$"
+#DEBUG_LOG_FILE="/tmp/cm_oracle_debug.$$"
+DEBUG_LOG_FILE="/tmp/oracle_system_event_debug.log.$$"
+
+log_query()
+{
+  #Add From clause
+  echo $SELECT >>$TEMP_QUERY_CLAUSE
+  echo $FROM >>$TEMP_QUERY_CLAUSE
+  echo $WHERE >>$TEMP_QUERY_CLAUSE
+  #debug_log "Query is: `cat $TEMP_QUERY_CLAUSE`"
+  #echo "Query is: `cat $TEMP_QUERY_CLAUSE`"
+}
+
+remove_files()
+{
+#  echo "Error is:"
+#  cat $QUERY_ERR_FILE 
+#  echo "Output is:"
+#  cat $QUERY_OUT_FILE 
+#  echo "Query is:"
+#  cat $TEMP_QUERY_CLAUSE
+
+  if [ $DEBUG_LEVEL -eq 0 ]; then
+    rm -f $QUERY_ERR_FILE $QUERY_OUT_FILE $TEMP_QUERY_CLAUSE
+  fi
+}
+
+show_query_error()
+{
+#psql: could not connect to server: No such file or directory
+#        Is the server running locally and accepting
+#        connections on Unix domain socket "/tmp/.s.PGSQL.5432"?
+
+  grep "could not connect to server" $QUERY_ERR_FILE >/dev/null
+  if [ $? -eq 0 ]; then
+    echo "Postgress database is not running. Start database using /etc/init.d/postgresql start"
+  else
+#ERROR:  relation "abx" does not exist
+    grep "does not exist" $QUERY_ERR_FILE >/dev/null
+    if [ $? -eq 0 ]; then
+      echo "Database table for test run $TEST_RUN are not existing"
+    else
+      echo "Error in getting data due to following error:"
+      cat $QUERY_ERR_FILE
+    fi
+    #Todo - Add this later
+    #psql: FATAL:  role "netstorm" does not exist
+  fi
+
+  remove_files
+  exit 1
+}
+
+#Logon
+# has the following syntax:
+# {username[/password][@connect_identifier | / }
+# [AS {SYSOPER|SYSDBA}] | /NOLOG 
+
+#@connect_identifier
+
+#Consists of an Oracle Net connect identifier. The exact syntax depends upon the Oracle Net communications protocol your Oracle installation uses. For more information, refer to the Oracle Net manual appropriate for your protocol or contact your DBA.
+# /
+#Represents a default logon using operating system authentication. You cannot enter a connect_identifer if you use a default logon. In a default logon, SQL*Plus typically attempts to log you in using the username OPS$name, where name is your operating system username. Note that the prefix "OPS$" can be set to any other string of text. For example, you may wish to change the settings in your INIT.ORA parameters file to LOGONname or USERIDname. See the Oracle9i Database Administrator's Guide for information about operating system authentication.
+
+
+run_query_oracle()
+{
+  debug_log "run_query called."
+
+  #/prod/prop/orasoft/oracle/product/11.2.0/db11.2.0.2/bin/sqlplus readonly/readonly@//10.210.153.51:1571/OS2071 >$QUERY_OUT_FILE <<+ 2>$QUERY_ERR_FILE
+  #/prod/prop/orasoft/oracle/product/11.2.0/db11.2.0.2/bin/sqlplus readonly/readonly@//10.210.153.51:1571/OR2071S >$QUERY_OUT_FILE <<+ 2>$QUERY_ERR_FILE
+  #/prod/prop/orasoft/oracle/product/11.2.0/db11.2.0.2/bin/sqlplus readonly/readonly@"(description=(address=(host=10.210.153.51)(protocol=tcp)(port=1571))(connect_data=(sid=OS2071)))" >$QUERY_OUT_FILE <<+ 2>$QUERY_ERR_FILE
+  
+  #/prod/prop/orasoft/oracle/product/11.2.0/db11.2.0.2/bin/sqlplus readonly/readonly@"(description=(address=(host=10.210.153.51)(protocol=tcp)(port=1571))(connect_data=(sid=OS2071)(instancename=OR2071S)))" >$QUERY_OUT_FILE 2>$QUERY_ERR_FILE <<+
+#select * from v\$sysstat where STAT_ID=3080465522;
+
+  /prod/prop/orasoft/oracle/product/11.2.0/db11.2.0.2/bin/sqlplus readonly/readonly@"(description=(address=(host=10.210.153.51)(protocol=tcp)(port=1571))(connect_data=(sid=OS2071)(instancename=OR2071S)))" >$QUERY_OUT_FILE 2>$QUERY_ERR_FILE <<+
+$SELECT
+$FROM
+$WHERE
+$ORDER_BY
+;
++
+
+  #if [ -s $QUERY_ERR_FILE ];then
+    #show_query_error
+  #fi
+
+ # echo "Query error:"
+ # cat $QUERY_ERR_FILE
+ # echo "Query out:--------------------------------------------------------------"
+ # cat $QUERY_OUT_FILE
+ #  echo "------------------------------------------------------------------------"
+}
+
+run_query()
+{
+  debug_log "run_query called."
+  psql -A test netstorm >$QUERY_OUT_FILE 2>$QUERY_ERR_FILE <<+ 
+$SELECT
+$FROM
+$WHERE
++
+
+  #if [ -s $QUERY_ERR_FILE ];then
+    #show_query_error
+  #fi
+}
+
+#. $NS_WDIR/bin/nsi_db_utils
+
+val_args()
+{
+  debug_log "val_args called"
+}
+
+make_query()
+{
+  #debug_log "make query called, STATID = $STATID"
+  #echo "make query called, STATID = $STATID"
+  SELECT="select"
+
+  SELECT="$SELECT STATISTIC# AS \"STATISTIC\", CLASS AS \"CLASS\", VALUE AS \"VALUE\", STAT_ID AS \"STAT_ID\""
+  #FROM="FROM SYS_STAT_DEMO"
+  FROM="FROM V\$SYSSTAT"
+  WHERE="WHERE STAT_ID = 3080465522 OR STAT_ID = 2882015696 OR STAT_ID = 2263124246 OR STAT_ID = 1190468109 OR STAT_ID = 1400824662 OR STAT_ID = 681815839 OR STAT_ID = 3628421385 OR STAT_ID = 1159355779"
+  ORDER_BY="ORDER BY STAT_ID ASC"
+}
+
+#trap 'rm -f $NETSTAT_FILE; exit -1' 1 2 3 4 5 13 15
+
+get_data()
+{
+  debug_log "get_data method callled."
+
+  debug_log "Calling run_query_oracle"
+
+  run_query_oracle
+}
+
+init_data()
+{
+  debug_log "init_data function called."
+
+  if [ "X$TEST_MODE" != "X1" ];then
+    get_data
+  fi
+
+  PRE_VAL1=`cat $QUERY_OUT_FILE | grep '681815839' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  PRE_VAL2=0
+
+  PRE_VAL3=`cat $QUERY_OUT_FILE | grep '1190468109' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  PRE_VAL4=`cat $QUERY_OUT_FILE | grep '1400824662' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  PRE_VAL5=`cat $QUERY_OUT_FILE | grep '2263124246' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  PRE_VAL6=`cat $QUERY_OUT_FILE | grep '2882015696' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  PRE_VAL7=0
+  PRE_VAL8=0
+
+  #PRE_VAL=(`cat $QUERY_OUT_FILE | egrep '681815839|1159355779|1190468109|1400824662|2263124246|2882015696|3080465522|3628421385' | awk -F' ' '{printf "%.0f ",$3}'`)
+
+  #NUM_PRE_VAL=${#PRE_VAL[@]}
+}
+
+#declare -a VAL_ARRAY
+
+get_relative_data()
+{
+  #i=0
+  #CUR_VAL=(`cat $QUERY_OUT_FILE | egrep '681815839|1159355779|1190468109|1400824662|2263124246|2882015696|3080465522|3628421385' | awk -F' ' '{printf "%.0f ",$3}'`)
+
+  #NUM_CUR_VAL=${#CUR_VAL[@]}  
+
+ 
+  debug_log "get_relative_data called." 
+  CUR_VAL1=`cat $QUERY_OUT_FILE | grep '681815839' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  CUR_VAL2=`cat $QUERY_OUT_FILE | grep '1159355779' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  CUR_VAL3=`cat $QUERY_OUT_FILE | grep '1190468109' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  CUR_VAL4=`cat $QUERY_OUT_FILE | grep '1400824662' | awk -F' ' '{printf "%.0f ",$3}'`
+
+  CUR_VAL5=`cat $QUERY_OUT_FILE | grep '2263124246' | awk -F' ' '{printf "%.0f ",$3}'`
+ 
+  CUR_VAL6=`cat $QUERY_OUT_FILE | grep '2882015696' | awk -F' ' '{printf "%.0f ",$3}'`
+  
+  CUR_VAL7=`cat $QUERY_OUT_FILE | grep '3080465522' | awk -F' ' '{printf "%.0f ",$3}'`
+ 
+  CUR_VAL8=`cat $QUERY_OUT_FILE | grep '3628421385' | awk -F' ' '{printf "%.0f ",$3}'`
+  
+  #Data dump
+    debug_log "Prev value:---"
+    debug_log "PRE_VAR1=$PRE_VAL1, PRE_VAR2=$PRE_VAL2, PRE_VAR3=$PRE_VAL3, PRE_VAR4=$PRE_VAL4, PRE_VAR5=$PRE_VAL5, PRE_VAR6=$PRE_VAL6, PRE_VAR7=$PRE_VAL7, PRE_VAR8=$PRE_VAL8"
+    debug_log "Cur value:---"
+    debug_log "CUR_VAR1=$CUR_VAL1, CUR_VAR2=$CUR_VAL2, CUR_VAR3=$CUR_VAL3, CUR_VAR4=$CUR_VAL4, CUR_VAR5=$CUR_VAL5, CUR_VAR6=$CUR_VAL6, CUR_VAR7=$CUR_VAL7, CUR_VAR8=$CUR_VAL8"
+    debug_log ""
+
+  tmp_var=`expr $CUR_VAL1 - $PRE_VAL1` 
+  echo $tmp_var >> $TMP_FILE
+  tmp_var=`expr $CUR_VAL2 - $PRE_VAL2` 
+  echo $tmp_var >> $TMP_FILE
+  tmp_var=`expr $CUR_VAL3 - $PRE_VAL3` 
+  echo $tmp_var >> $TMP_FILE
+  tmp_var=`expr $CUR_VAL4 - $PRE_VAL4` 
+  echo $tmp_var >> $TMP_FILE
+  tmp_var=`expr $CUR_VAL5 - $PRE_VAL5` 
+  echo $tmp_var >> $TMP_FILE
+  tmp_var=`expr $CUR_VAL6 - $PRE_VAL6`
+  echo $tmp_var >> $TMP_FILE
+  tmp_var=`expr $CUR_VAL7 - $PRE_VAL7`
+  echo $tmp_var >> $TMP_FILE
+  tmp_var=`expr $CUR_VAL8 - $PRE_VAL8` 
+  echo $tmp_var >> $TMP_FILE
+
+  cat $TMP_FILE | awk -F' ' '{printf $1" "}' 
+  echo ""
+
+  debug_log "Calculate value:---"
+  debug_log "`cat $TMP_FILE`"
+  rm -f $TMP_FILE
+  #while true 
+  #do
+    #echo "i=$i, cur_var=${CUR_VAL[i]}"
+    #if [ "X$i" = "X1" -o "X$i" = "X6" -o "X$i" = "X7" ];then 
+    #  VAL_ARRAY[$i]=${CUR_VAL[i]}
+    #else
+    #  VAL_ARRAY[$i]=`expr ${CUR_VAL[i]} - ${PRE_VAL[i]}`
+    #fi
+
+    #i=`expr $i + 1`
+
+    #if [ $i -eq $NUM_PRE_VAL ];then 
+    #  break;
+    #fi
+    
+  #done
+  #echo "VAL_ARRAY="
+  #echo "${VAL_ARRAY[@]}"
+  #echo ""
+}
+
+show_output()
+{
+  debug_log "Showing output"
+
+  #cat $QUERY_OUT_FILE | egrep '681815839|1159355779|1190468109|1400824662|2263124246|2882015696|3080465522|3628421385' | awk -F' ' '{printf "%.0f ",$3}'
+
+  get_relative_data
+  #echo ""
+  remove_files 
+}
+
+Usage()
+{
+  error_log "$*"
+  error_log "Usage: cm_oracle_sysstat <oracle connection parameters> -i <interval in secs> -v <value>"
+  exit -1
+}
+
+
+############# Function calling ###############
+
+#Must set debug/error log file in the beginning
+#set_error_log_file
+
+while getopts i:mDt? c  2>/dev/null
+do
+  case $c in
+    i) INTERVAL=$OPTARG;;    #has default 10 sec
+    D) DEBUG=1;;
+    m) MODE=1;;
+    t) TEST_MODE=1;;
+    ?) Usage "Invalid arguments";;
+    *) Usage "Invalid arguments";;
+  esac
+done
+
+debug_log "Oracle_System_Event Monitor started."
+debug_log "MODE = $MODE, TEST_MODE=$TEST_MODE, DEBUG=$DEBUG"
+
+#val_args
+make_query
+log_query
+
+if [ "X$TEST_MODE" = "X1" ];then
+ QUERY_OUT_FILE=oracle_sysstat_data.dat 
+fi
+
+init_data
+
+if [ "X$MODE" = "X1" ];then
+  if [ "X$TEST_MODE" != "X1" ];then
+    get_data
+  fi
+  show_output
+else
+  lib_sleep $INTERVAL                 #Because first sample comes after freq
+  while true
+    do
+      # Test is over. So exit with success status
+      isTestOver $MON_TEST_RUN
+      if [ $? = 1 ]; then
+        exit 0
+      fi
+
+      if [ "X$TEST_MODE" != "X1" ];then
+        get_data
+      fi
+      show_output
+
+      lib_sleep $INTERVAL
+   done
+fi
+
+exit 0

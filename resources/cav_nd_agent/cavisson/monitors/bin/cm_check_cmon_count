@@ -1,0 +1,68 @@
+#!/bin/bash
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+INTERVAL_SECS=$MON_FREQUENCY
+testname=$MON_TEST_RUN
+count=0
+tierid=0
+NS_WDIR=$MON_NS_WDIR
+
+usage="invalid argument: -T<topology_name> -t <tiername>"
+
+check_mandatory_args()
+{
+  if [ "X$NS_WDIR" = "X" ]; then
+    echo "Error: NS_WDIR is not set."
+    exit -1
+  fi
+
+  if [ "X$topologyName" = "X" ]; then
+    echo "Mandatory arg -T<topology_name> missing"
+    exit -1
+  fi
+
+  if [ "X$tierName" = "X" ]; then
+    echo "Mandatory arg -t<tiername> missing"
+    exit -1
+  fi
+}
+
+while getopts T:t:i: name
+ do
+   case $name in
+     T) topologyName="$OPTARG" ;;        
+     t) tierName="$OPTARG" ;;       
+     i) INTERVAL_SECS=$OPTARG ;;
+     *) echo "$usage" ;;                     # display usage and exit
+   esac
+done
+
+check_mandatory_args
+
+TIER_CONF_PATH="$NS_WDIR/topology/$topologyName/Tier.conf"
+SERVER_CONF_PATH="$NS_WDIR/topology/$topologyName/Server.conf"
+
+#find tierid of pass tier
+tierid=`cat $TIER_CONF_PATH | grep "$tierName" | cut -d'|' -f2`
+
+while :
+do
+  #Count no of server which bits are set for CMON
+  cat $SERVER_CONF_PATH | grep -v "^#" |awk -v tier_id=$tierid -F"|" '{if($4==tier_id && $13 >= 2) ++count} END {print count}'
+  sleep $INTERVAL_SECS
+done
+
+

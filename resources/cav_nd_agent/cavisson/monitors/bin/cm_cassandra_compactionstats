@@ -1,0 +1,118 @@
+# Name    - cm_cassandra_compactionstats
+# Purpose - This is a custom monitor which parses output of nodetool compactionstats and outputs data
+# Option  - 'Run Once'
+# GDF     - cm_cassandra_compactionstats.gdf 
+# Keyword -
+#   CUSTOM_MONITOR 192.168.1.218 cm_cassandra_compactionstats.gdf COMPACTION_STATS_MSG 2 cm_cassandra_compactionstats -i 10
+
+#/home/compass-119/apache-cassandra-1.2.8/bin/nodetool compactionstats
+#pending tasks: 0
+#Active compaction remaining time :        n/a
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+INTERVAL_SECS=$MON_FREQUENCY
+DEBUG=0
+
+debug_log()
+{
+  if [ $DEBUG -eq 1 ];then
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+set_debug_log_file()
+{
+if [ "XX$CAV_MON_HOME" != "XX" ];then
+  DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_cassandra_compactionstats_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+else
+  DEBUG_LOG_FILE="/tmp/cm_cassandra_compactionstats_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+  debug_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+fi
+}
+
+run_cmd_and_show_data()
+{
+  #TODO: currently running command on every interval, but need to run this in background.
+  while true
+  do
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+
+   #OUTPUT=`$CASSANDRA_PATH/bin/nodetool -h $HOST -p $PORT -u $USER -p $PASSWORD compactionstats | awk -F':' '{printf $2}'`
+   #OUTPUT=`/home/compass-119/apache-cassandra-1.2.8/bin/nodetool compactionstats | awk -F':' '{printf $2}'`
+    
+    OUTPUT=`$CASSANDRA_PATH/bin/nodetool compactionstats | awk -F':' '{printf $2}'`
+    if [ $? != 0 ];then
+      ns_log_event "Major" "Running command '$CASSANDRA_PATH/bin/nodetool compactionstats' failed for compaction data."
+      return 1
+    fi
+
+    PENDING_TASKS=`echo $OUTPUT | awk -F' ' '{print $1}'`
+    TIME=`echo $OUTPUT | awk -F' ' '{print $2}'`
+    if [ "X$TIME" = "Xn/a" ]; then
+      TIME=0
+    fi
+
+    echo "$PENDING_TASKS $TIME"
+    lib_sleep $INTERVAL_SECS
+  done
+}
+
+display_help_and_exit()
+{
+  echo "Usage: cm_cassandra_compactionstats [-i <Interval>] [-H <Hostname>] [-P <Port>] [-C <CASSANDRA PATH>] [-u <USERNAME>] [-p <PASSWORD>]"
+  echo "-i: used for interval (in seconds)"
+  echo "-H: used for Hostname"
+  echo "-P: used for Port"
+  echo "-C: used for cassandra path "
+  echo "-u: used for username"
+  echo "-p: used for password"
+  exit -1
+}
+
+set_debug_log_file
+
+while getopts i:H:P:C:u:p:D? arg
+do
+  case $arg in
+    i) INTERVAL_SECS=$OPTARG ;;
+    H) HOST=$OPTARG ;;
+    P) PORT=$OPTARG ;;
+    C) CASSANDRA_PATH=$OPTARG ;; 
+    u) USER=$OPTARG ;; 
+    p) PASSWORD=$OPTARG ;; 
+    D) DEBUG=1;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+debug_log "cm_cassandra_compactionstats monitor started."
+
+#Check installation directory
+if [ ! -d $CASSANDRA_PATH ];then
+  echo "Cassandra Installation Path $CASSANDRA_PATH does not exists."
+  exit 255
+fi
+
+run_cmd_and_show_data
+
+debug_log "cm_cassandra_compactionstats monitor started."
+
+exit 0

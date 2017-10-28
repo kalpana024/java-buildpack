@@ -1,0 +1,29 @@
+#!/bin/sh
+# df -k 
+#   Filesystem     1K-blocks      Used Available Use% Mounted on
+#   /dev/sda1      472373528 320910700 127444552  72% /
+#   udev             4048376         4   4048372   1% /dev
+#   tmpfs             812640       792    811848   1% /run
+#   none                5120         0      5120   0% /run/lock
+#   none             4063180      1804   4061376   1% /run/shm
+#   tmpfs           10485760         0  10485760   0% /mnt/tmp
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "XX$CAV_MON_HOME" = "XX" ]; then
+  CAV_MON_HOME="`dirname pwd`"
+fi
+
+avil_disk_space=`df -k $CAV_MON_HOME | tail -1 | awk -F' ' '{print $4}'`
+if [ "XX$avil_disk_space" = "XX" ];then
+  exit 1
+fi
+
+#Conver into bytes
+avil_disk_space=`expr $avil_disk_space \* 1024`
+if [ "XX$avil_disk_space" = "XX" ];then
+  exit 1
+fi
+
+echo $avil_disk_space
+
+exit 0

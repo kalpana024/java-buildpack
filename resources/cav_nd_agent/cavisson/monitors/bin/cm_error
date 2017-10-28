@@ -1,0 +1,21 @@
+# Name - cm_error
+# Purpose - This is a sample custom monitor for error handling
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+echo "Error: This is a custom monitor to test error handling"
+
+exit 0

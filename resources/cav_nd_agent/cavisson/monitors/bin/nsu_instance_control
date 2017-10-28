@@ -1,0 +1,98 @@
+
+#Operation : This shell runs the wl_admin_oracle shell with arguements instance name and the operation to be performed on that shell.
+
+
+#Set CAV_MON_HOME, if not set
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+#Variable Decleration
+LOG_MAX_SIZE=1024
+STR=""
+LOGFILE="$CAV_MON_HOME/logs/nsu_instance_control.log"
+
+fun_to_write_in_log()
+{
+  status=$1
+  oprtn=$2
+
+  if [ $status -eq 0 ] ; then
+    echo "0: $oprtn Operation on $INSTANCE_NAME of $INSTANCE_TYPE type is Successful : $result"
+    write_in_logfile "$OPERATION Operation on $INSTANCE_NAME of $INSTANCE_TYPE type is Successful. Output is : $result"
+  else
+    echo "1: $oprtn Operation on $INSTANCE_NAME of $INSTANCE_TYPE type is Failed due to error : $result"
+    write_in_logfile "$OPERATION Operation on $INSTANCE_NAME of $INSTANCE_TYPE type is Failed. Error is : $result"
+  fi
+}
+
+write_in_logfile()
+{
+  STR=$*
+  WRITE_FLAG=0
+
+  if [ ! -f $LOGFILE ]; then
+    touch ${LOGFILE}
+    echo "`date +'%m/%d|%r'`|Log file ($LOGFILE) does not exists. Created log file $LOGFILE" >> $LOGFILE
+  fi
+
+  if [ `ls -l $LOGFILE | awk -F" " '{print $5}'` -gt `expr $LOG_MAX_SIZE \* 10240` ]; then
+    WRITE_FLAG=1
+  fi
+
+  if [ $WRITE_FLAG -eq 1 ]; then
+    #rollover
+    mv ${LOGFILE} ${LOGFILE}.prev
+    echo "`date +'%m/%d/%y|%r'`|$STR" >> $LOGFILE
+  else
+    echo "`date +'%m/%d/%y|%r'`|$STR" >> $LOGFILE
+  fi
+}
+
+
+Usage()
+{
+  echo ""
+  echo "nsu_instance_control <instance_type> <instance_name> <operation>"
+  echo "To run the shell the following options are required"
+  echo "First arguement : This indicates Instance Type. Provide weblogic as its arguement."
+  echo "Second arguement : This indicates Instance Name"
+  echo "Third arguement : This indicates operation, whether to start/stop/restart/show"
+  echo ""
+  exit -1
+}
+
+######################################################################
+
+INSTANCE_TYPE=$1
+INSTANCE_NAME=$2
+OPERATION=$3
+
+#Running the shell without any arguements
+if [ $# -ne 3 ] ; then
+  Usage
+fi
+
+if [ "X$OPERATION" != "Xstart" -a "X$OPERATION" != "Xstop" -a "X$OPERATION" != "Xrestart" -a "X$OPERATION" != "Xshow" ] ;then
+  Usage
+fi 
+
+#running the shell for its output
+if [ "X$OPERATION" = "Xrestart" ]; then
+  result=`sudo /etc/init.d/$INSTANCE_NAME stop 2>&1`
+  fun_to_write_in_log $? "stop"
+ 
+  result=`sudo /etc/init.d/$INSTANCE_NAME start 2>&1`
+  fun_to_write_in_log $? "start"
+else
+  result=`sudo /etc/init.d/$INSTANCE_NAME $OPERATION 2>&1`
+  fun_to_write_in_log $? $OPERATION
+fi
+

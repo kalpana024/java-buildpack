@@ -1,0 +1,48 @@
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+ns_check_mon_pass_and_exit()
+{
+  echo "CheckMonitorStatus:Pass"
+  exit 0
+}
+
+while getopts f:p:d:? c
+do
+  case $c in
+    f) FILEPATH=$OPTARG;;
+    p) LOGPATTERN=$OPTARG;;
+    d) DIRPATH=$OPTARG;;
+  esac
+done
+
+mkdir -p $DIRPATH
+mkdir /tmp/Logs_Temp
+
+cp $FILEPATH/$LOGPATTERN /tmp/Logs_Temp
+DATE_Formate=`date '+%Y_%m_%d_%H_%M_%S'`
+i=0
+for filename in `ls -1t /tmp/Logs_Temp`
+do
+i=`expr $i + 1`
+mv /tmp/Logs_Temp/$filename $DIRPATH/$filename$DATE_Formate
+done
+rm $FILEPATH/$LOGPATTERN
+
+#mv $FILEPATH/$LOGPATTERN $DIRPATH
+
+ns_check_mon_pass_and_exit
+
+exit 0
+

@@ -1,0 +1,74 @@
+#!/bin/sh
+#####################################################################################
+# Purpose   : This function will show all child of provided pid
+# 
+# Copyright : Cavisson System
+#
+# Author(s) : Manish Kr. Mishra
+# Date      : Thu Jul 11 09:06:25 IST 2013
+####################################################################################
+
+proc_id=$1
+psT_idx=0
+
+set_root_pid()
+{
+  ps_tree[$psT_idx]=$1 
+  #echo "[$psT_idx]    : [root]   -> ${ps_tree[$psT_idx]}" 
+
+  psT_idx=`expr $psT_idx + 1`
+}
+
+get_childs_pid()
+{
+  psT_idx=$1
+  ppid=$2
+
+  #echo "Method Called, psT_idx=$psT_idx, ppid=$ppid"
+  ps_tree[$psT_idx]=`ps -ef | awk '$3 == '$ppid' {printf $2" "}'`
+  #echo "[$psT_idx]    : [$ppid]  -> ${ps_tree[$psT_idx]}" 
+ 
+  psT_idx=`expr $psT_idx + 1`
+}
+
+if [ "X$proc_id" = "X" ];then
+  echo "Please provide process id"
+  echo "Usages: nsi_show_ps_tree <pid>"
+  exit 1
+fi
+
+#echo -e "\e[0;32;49m[index]: [ppid]   -> [pids]\e[0m" 
+set_root_pid $proc_id 
+
+get_childs_pid $psT_idx $proc_id
+
+ps_idx=1
+while true
+do 
+  # echo "Within while - ps_idx=$ps_idx, psT_idx = $psT_idx"
+   num_childs=`echo ${ps_tree[$ps_idx]} | awk -F' ' '{print NF}'`
+   #echo "## ps_tree - num_childs = $num_childs, ${ps_tree[$ps_idx]}"
+
+   for((i = 1; i <= $num_childs; i++)) 
+   do 
+    pid=`echo ${ps_tree[$ps_idx]} | awk -F' ' -v id=$i '{print $id}'`
+     #echo "#### i = $i, Finding child for $pid"
+     #sleep 10
+     get_childs_pid $psT_idx $pid
+   done
+
+   #echo "After - ps_idx=$ps_idx, psT_idx = $psT_idx, ps_tree = ${ps_tree[@]}"
+
+   ps_idx=`expr $ps_idx + 1`
+
+   if [ $ps_idx -eq $psT_idx -o $ps_idx -gt $psT_idx ]; then
+     break
+   fi
+done
+
+pid_list=`echo ${ps_tree[@]} |sed 's/[ ]/ /g'`
+echo "Childs of Process $proc_id :--" 
+echo $pid_list | awk '{ for ( i = NF; i > 0; i--) printf $i" "}'
+echo  ""  
+echo "Process Tree :--"
+ps -p "$pid_list" -o 'pid ppid stime args' --forest

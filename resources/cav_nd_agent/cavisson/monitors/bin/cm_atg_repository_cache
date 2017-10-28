@@ -1,0 +1,464 @@
+################################################################################
+# Name    : cm_atg_repository_cache
+# Purpose : This is a dynamic monitor to get data from wget command 
+#           wget --http-user=admin --http-pasword=k0hls123 http://192.168.211.8:15010/dyn/admin/nucleus/atg/registry/ContentRepositories/CustomProductCatalog/
+#           It parses output of above command
+# Option  : 'Run Once'
+# GDF     : cm_atg_repository_cache.gdf in netstorm machine ($NS_WDIR/sys)
+# Keyword :
+#           DYNAMIC_VECTOR_MONITOR 192.168.147.171 ATGRepositoryCacheStats cm_atg_repository_cache.gdf 2 cm_atg_repository_cache -i 10 -u root -p abeona -U http://127.0.0.1:8023/cm_cache_status_2.html -R REVIEWER -R repository ALL EOC cm_atg_repository_cache -u root -p abeona -U http://127.0.0.1:8023/cm_cache_status_2.html -R REVIEWER -L header
+#                                  OR
+#           CUSTOM_MONITOR 192.168.147.171 cm_atg_repository_cache.gdf ATGRepositoryCacheStats 2 cm_cache_stats -u root -p abeona -U http://127.0.0.1:8023/cm_cache_status_2.html -R REVIEWER
+#
+# Return  : On success  - 0
+#           On failure  - 1
+# Date    : Monday, 31 Dec 2012 
+###############################################################################
+
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit 1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+set_mon_shell
+
+PID=$$
+RUNTIME_FILE=$CAV_MON_TMP_DIR/cm_cache_status_$PID.rt
+CACHE_STATUS_OUT_FILE=$CAV_MON_TMP_DIR/cm_cache_status_file_$PID.out
+DEBUG_LOG_FILE=$CAV_MON_TMP_DIR/cm_cache_status_$PID.log
+USER_NAME=""
+PASSWORD=""
+POSITIVE_FILTERS="ALL"
+NEGATIVE_FILTERS="NA"
+NUM_VECTOR="1"
+DEBUG=0
+INTERVAL_SECS=$MON_FREQUENCY
+i=0
+
+debug_log()
+{
+  if [ "X$DEBUG" = "X0" ]; then
+    return
+  else
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+calculate_num_vectors()
+{
+  debug_log "calculate_num_vectors Method Called."
+
+  if [ "X$POSITIVE_FILTERS" != "XALL" ];then
+    NUM_VECTOR=`echo $POSITIVE_FILTERS | awk -F',' '{print NF}'`
+    if [ "X$NUM_VECTOR" = "X" ];then
+      display_help_and_exit "Please provide at least on item name" 
+    fi
+  else 
+    NUM_VECTOR=`grep "item-descriptor" $CACHE_STATUS_OUT_FILE | wc -l`
+  fi
+
+  debug_log "Total NUM_VECTOR = $NUM_VECTOR"
+
+  #If there is no vector available 
+  if [ "X$NUM_VECTOR" = "X" ];then
+    ns_log_event "Critical" "No vector is found so Exiting!" 
+    exit 1
+  fi
+}
+
+run_cmd()
+{
+  debug_log "run_cmd Method called."
+
+  PROTOCOL_PART=`echo ${URL} | awk -F'://' '{print $1}'` 
+  URL_PART=`echo ${URL} | awk -F'://' '{print $2}'` 
+
+  #If protocol not given then default will be http
+  if [ "X$PROTOCOL_PART" = "X" ];then
+    PROTOCOL_PATR="http"
+  fi
+
+  #If url part not found then it given url 
+  if [ "X$URL_PART" = "X" ];then
+    URL_PATR=$URL
+  fi
+
+  debug_log "PROTOCOL_PART = $PROTOCOL_PART, URL_PART = $URL_PART"
+
+  wget --http-user=$USER_NAME --http-password=$PASSWORD $PROTOCOL_PART://$URL_PART -O $RUNTIME_FILE 2>/dev/null
+  if [ $? != 0 ];then
+    ns_log_event "Critical" "Running command 'wget --http-user=$USER_NAME --http-password=$PASSWORD $PROTOCOL_PART://$URL_PART -O $RUNTIME_FILE' failed."
+    is_cmd_failed=1  
+    return 1
+  else
+    is_cmd_failed=0 
+  fi
+
+  sed -e '/item-descriptor/,/<\/tr>/!d' $RUNTIME_FILE >$CACHE_STATUS_OUT_FILE
+}
+
+# HTML FILE 'http://127.0.0.1:8023/cm_cache_status.html' CACHE STATISTICS :
+#
+#Cache usage statistics
+#
+#   	entryCount 	weakEntryCount 	cacheSize 	usedRatio 	accessCount 	hitCount 	weakHitCount 	missCount 	hitRatio 	cacheInvalidations 	entryInvalidations 	mainLRUCulls 	mainLRUTotalItemsCulled 	mainLRUMaxItemsCulled 	weakLRUCulls 	weakLRUTotalItemsCulled 	weakLRUMaxItemsCulled
+#
+#item-descriptor=ratingsAndReviews cache-mode=simple
+#Items	0 	0 	100000 	0.0% 	0 	0 	0 	0 	0.0% 	0 	0 	0 	0 	0 	29 	0 	0
+#Queries	0 	n/a 	5000 	0.0% 	0 	0 	n/a 	0 	0.0% 	0 	0 	n/a 	n/a 	n/a 	n/a 	n/a 	n/a
+#item-descriptor=reviewer cache-mode=simple
+#Items	13841 	0 	100000 	13.84% 	42793 	15110 	0 	27683 	35.31% 	0 	0 	0 	0 	0 	29 	0 	0
+#Queries	0 	n/a 	5000 	0.0% 	0 	0 	n/a 	0 	0.0% 	0 	0
+
+##########################  Content of file CACHE_STATUS_OUT_FILE  #########################
+
+#<tr><td colspan=18><b>item-descriptor=reviewer cache-mode=simple</b></td></tr>
+#<tr>
+#<th>Items</th><td>213841</td>
+#<td>20</td>
+#<td>2100000</td>
+#<td>213.84%</td>
+#<td>242793</td>
+#<td>215110</td>
+#<td>20</td>
+#<td>227683</td>
+#<td>235.31%</td>
+#<td>20</td>
+#<td>20</td>
+#<td>20</td>
+#<td>20</td>
+#<td>20</td>
+#<td>229</td>
+#<td>20</td>
+#<td>20</td>
+#</tr>
+
+load_data()
+{
+  debug_log "load_data Method Called."
+
+  run_cmd
+
+  calculate_num_vectors
+
+  #create vectors array
+  create_vector_list
+  
+  #Check whether number of vector is less or greater than vector list
+  #NVector=`grep "item-descriptor" $CACHE_STATUS_OUT_FILE | wc -l`
+  #if [ $NVector -lt $NUM_VECTOR ];then 
+  #  echo "Warrning: Number of vector is mismatched form vector calulated in operation show vector and show data" 
+  #  exit 1
+  #fi
+
+  debug_log "NUM_UNIQ_VECTORS = $NUM_UNIQ_VECTORS"
+  for(( i = 1; i <= $NUM_UNIQ_VECTORS; i++))
+  do
+    debug_log "i = $i, j = $j, num_fields = $num_fields"
+    debug_log "Loading data for Vector = [${unique_vector_list[$i]}]"
+
+    #Making data line
+    #Following are the 17 fields per items
+
+    #     <th>Items</th>          Fields Header                   
+
+    # 1   <td>1</td>              localEntries 
+    # 2   <td>0</td>              weakEntries 
+    # 3   <td>50</td>             localCacheSize 
+    # 4   <td>2.0%</td>           usedRatio  
+    # 5   <td>2</td>              access count 
+    # 6   <td>72367</td>          totalHits 
+    # 7   <td>2</td>              totalMisses  
+    # 8   <td>100.0%</td>         ratio   
+    # 9  <td>0</td>               weakHits 
+    # 10  <td>0</td>              cacheInvalidations 
+    # 11  <td>0</td>              entryInvalidations 
+    # 12  <td>0</td>              localCulls  
+    # 13  <td>0</td>              localItemsCulled 
+    # 14  <td>0</td>              localMaxCulled 
+    # 15  <td>8</td>              weakCulls  
+    # 16  <td>0</td>              weakItemsCulled 
+    # 17  <td>0</td>              weakMaxCulled 
+#TODO Maninder
+
+    VECTOR_NAME=`echo ${unique_vector_list[$i]} | tr '|' ' '`
+    VECTOR_DISPLAY_NAME=`echo ${unique_vector_list[$i]} | tr -d '|'`
+    data_line=`sed -e "/\<item-descriptor=$VECTOR_NAME cache-mode\>/,/<\/tr>/!d" $CACHE_STATUS_OUT_FILE | tail -23 | awk '-F<td>' '{print $2}'  | tr -d '%' | awk '-F</td>' '{printf $1" "}'`
+    data_line_count=`sed -e "/\<item-descriptor=$VECTOR_NAME cache-mode\>/,/<\/tr>/!d" $CACHE_STATUS_OUT_FILE | grep "item-descriptor=$VECTOR_NAME" | wc -l`
+
+    #If data is not available for anyy vector then fill 0 for that vector
+    if [ "X$data_line" = "X" ];then
+      ns_log_event "Major" "Data for vector $VECTOR_DISPLAY_NAME is not availabe."
+      echo ${INSTANCE}${MON_VECTOR_SEPARATOR}${REPOSITORY}${MON_VECTOR_SEPARATOR}$VECTOR_DISPLAY_NAME"|0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"
+      continue
+    fi
+   #"${INSTANCE}${MON_VECTOR_SEPARATOR}${REPOSITORY}${MON_VECTOR_SEPARATOR}${unique_vector_list[$i]} " 
+   if [ $data_line_count -eq 1 ];then
+     echo $data_line | awk -F' ' -v vct="${INSTANCE}${MON_VECTOR_SEPARATOR}${REPOSITORY}${MON_VECTOR_SEPARATOR}$VECTOR_DISPLAY_NAME" '{print vct"|"$1" "$3" "$4" "$5" "$6" "$13" "$7" "$8" "$15" "$16" "$17" "$18" "$19" "$20" "$21" "$22}'
+   else
+     counter=1
+     while true
+     do
+       # first vector
+       if [ $counter -eq 1 ];then       
+         data_line=`sed -e "/\<item-descriptor=$VECTOR_NAME cache-mode\>/,/<\/tr>/!d" $CACHE_STATUS_OUT_FILE | head -24 | awk '-F<td>' '{print $2}'  | tr -d '%' | awk '-F</td>' '{printf $1" "}'`
+         echo $data_line | awk -F' ' -v vct="${INSTANCE}${MON_VECTOR_SEPARATOR}${REPOSITORY}${MON_VECTOR_SEPARATOR}$VECTOR_DISPLAY_NAME" '{print vct"|"$1" "$3" "$4" "$5" "$6" "$13" "$7" "$8" "$15" "$16" "$17" "$18" "$19" "$20" "$21" "$22}'
+       else
+         data_line=`sed -e "/\<item-descriptor=$VECTOR_NAME cache-mode\>/,/<\/tr>/!d" $CACHE_STATUS_OUT_FILE | head -${HEAD_VAL} | tail -${TAIL_VAL} | awk '-F<td>' '{print $2}'  | tr -d '%' | awk '-F</td>' '{printf $1" "}'`
+         duplicate_vector_counter=`expr $counter - 1`
+         echo $data_line | awk -F' ' -v vct="${INSTANCE}${MON_VECTOR_SEPARATOR}${REPOSITORY}${MON_VECTOR_SEPARATOR}$VECTOR_DISPLAY_NAME""_"$duplicate_vector_counter '{print vct"|"$1" "$3" "$4" "$5" "$6" "$13" "$7" "$8" "$15" "$16" "$17" "$18" "$19" "$20" "$21" "$22}'
+       fi
+
+       TAIL_VAL=`expr $counter \* 23`  
+       counter=`expr $counter + 1`      
+       HEAD_VAL=`expr $counter \* 23`  
+
+       if [ $counter -gt $data_line_count ];then
+         break;
+       fi
+     done
+  fi
+
+  done 
+}
+
+create_vector_list()
+{
+  declare vector_list
+  if [ "X$POSITIVE_FILTERS" != "XALL" ];then
+    vector_list[0]=$POSITIVE_FILTERS
+  else
+    #making space seperated vector list like..
+    #vector_list=catalog category category-info product product-info sku sku-info genericFolder
+    vector_list=($(grep "item-descriptor" $CACHE_STATUS_OUT_FILE | awk -F'item-descriptor=' '{print $2}' | awk -F' cache-mode=' '{print $1}'|tr ' ' '|' ))
+  fi
+
+  debug_log "Parse vectors of vector list: NUM_VECTOR = $NUM_VECTOR, vector_list = ${vector_list[@]}" 
+
+  arr_idx=1
+  i=1
+  while true
+  do
+    VECTOR=`echo ${vector_list[$i]}`
+    if [ $NFLAG -eq 1 ];then      #skip vectors mentioned in negative filters list
+       temp_vector=`echo $VECTOR|tr '|' ' '`
+      echo $NEGATIVE_FILTERS | grep -w temp_vector > /dev/null 2>&1         
+      if [ $? -eq 0 ]; then #if matched then skip
+        i=`expr $i + 1`
+        if [ $i -gt $NUM_VECTOR ]; then
+          break;
+        fi
+        continue;  
+      fi 
+    fi
+
+    #vector_list_array[$arr_idx]=`echo $vector_list | awk -F',' -v j=$i '{print $j}'`
+    vector_list_array[$arr_idx]=$VECTOR
+    debug_log "vector_list_array[$arr_idx] = `echo ${vector_list_array[$arr_idx]}| tr '|' ' '`" 
+    
+    i=`expr $i + 1`
+    if [ $i -gt $NUM_VECTOR ]; then
+      break;
+    fi
+
+    arr_idx=`expr $arr_idx + 1`
+  done
+
+  debug_log "Loaded Vectors: `echo ${vector_list_array[@]}| tr '|' ' '`"
+
+
+  ##unique_vector_list=($(printf "%s\n" "${vector_list_array[@]}" | sort -u));
+  ##NUM_UNIQ_VECTORS=${#unique_vector_list[@]}
+
+  UNIQ_VECTORS=`echo ${vector_list_array[@]} | tr ' ' '\n' | sort -u | tr '\n' ' '`
+  NUM_UNIQ_VECTORS=`echo $UNIQ_VECTORS | awk -F' ' '{print NF}'`
+
+  i=1
+  while true
+  do
+    unique_vector_list[$i]=`echo $UNIQ_VECTORS | cut -d' ' -f${i}`
+
+    i=`expr $i + 1`
+
+    if [ $i -gt $NUM_UNIQ_VECTORS ]; then
+      break;
+    fi
+  done
+
+  debug_log "Unique Vectors: NUM_UNIQ_VECTORS = $NUM_UNIQ_VECTORS , ${unique_vector_list[@]}"
+}
+
+cleanup()
+{
+  rm -f $CACHE_STATUS_OUT_FILE $RUNTIME_FILE
+}
+
+load_vectors()
+{
+  debug_log "load_vectors Method called."
+  
+  run_cmd
+  calculate_num_vectors
+
+  #create vectors array
+  create_vector_list
+  
+  #Removing CACHE_STATUS_OUT_FILE and RUNTIME_FILE 
+  debug_log "Removing files - $CACHE_STATUS_OUT_FILE $RUNTIME_FILE"
+  cleanup
+}
+
+show_vectors()
+{
+  debug_log "show_vectors Method Called."
+  debug_log "Show vectors: ${unique_vector_list[@]}"
+
+  i=1
+  while true
+  do
+ 
+  #echo ${unique_vector_list[@]}
+  echo -n "${INSTANCE}${MON_VECTOR_SEPARATOR}${REPOSITORY}${MON_VECTOR_SEPARATOR}`echo -n ${unique_vector_list[$i]}|tr -d '|'` "
+
+  i=`expr $i + 1`
+  if [ $i -gt $NUM_UNIQ_VECTORS ]; then
+    break;
+  fi
+  done
+
+  echo " "
+}
+
+show_data()
+{
+  nohup $UNIX_SHELL nsi_kill_child_of_monitors -p $PID -i 10 -f "$CACHE_STATUS_OUT_FILE $RUNTIME_FILE" 2>/dev/null&
+
+  while true
+  do
+    load_data
+    cleanup
+
+    # Test is over. So exit with success status
+    isTestOver $MON_TEST_RUN
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+
+    lib_sleep $INTERVAL_SECS
+  done
+}
+
+check_mandatory_options()
+{
+  debug_log "Method check_mandatory_options called"
+  
+  if [ "X$USER_NAME" = "X" ];then
+    display_help_and_exit "User Name is mandatory"
+  fi
+
+  if [ "X$PASSWORD" = "X" ];then
+    display_help_and_exit "Password is mandatory"
+  fi
+
+  if [ "X$URL" = "X" ];then
+    display_help_and_exit "Url is mandatory"
+  fi
+
+  if [ "X$REPOSITORY" = "X" ];then
+    display_help_and_exit "Repository is mandatory"
+  fi
+
+  if [ "X$INSTANCE" = "X" ];then
+    display_help_and_exit "Instance is mandatory"
+  fi
+}
+
+display_help_and_exit()
+{
+  echo "Error: $1"
+  echo "Incorrect Usage!"
+  echo "Usage:"
+  echo ""
+  echo "cm_cache_stats -P <positive filter 'comma seperated item list' Default is ALL> | -N <negative filter 'comma seperated item list'> -u <user_name> -p <password>  -U <host> -L header <for vectors> [-i <Interval>] [-D] [-I <Instance>]"
+  echo "Where - "
+  echo "-i (optional) : to provide interval (in seconds)."
+  echo "-P (optional):  to provide positive vectors list. It can be one name or ALL or comma separated list and within double quotes" 
+  echo "                  Eg: -P \"catalog,category,category-info\""
+  echo "                           Or        "
+  echo "                  Eg: -P ALL" 
+  echo "                           Or        "
+  echo "                  Eg: -P categoryL" 
+  echo "-N (optional):  to provide negative vectors list. It can be one name or comma separated list and within double quotes" 
+  echo "                Note - Postive filter (-P) & Negative filter (-N) cannot be applied together "
+  echo "-u (mandatory): to provide user name" 
+  echo "-p (mandatory): to provide to password" 
+  echo "-U (mandatory): to provide to host (with or without protocol)" 
+  echo "                  Eg: " 
+  echo "                    -U http://192.168.211.8:15010/dyn/admin/nucleus/atg/registry/ContentRepositories/CustomProductCatalog/ " 
+  echo "                                       OR                           " 
+  echo "                    -U 192.168.211.8:15010/dyn/admin/nucleus/atg/registry/ContentRepositories/CustomProductCatalog/" 
+  echo "-R (mandatory): to provide repository" 
+  echo "-I (mandatory): to provide instance" 
+  echo "-L (optional) : to get vectors list. Eg: -L header"
+  echo "                Note - this is manadatory to show vector list"
+  echo "-D (optional) : to run with debug mode, see debug file $CAV_MON_TMP_DIR/cm_cache_status_$PID.log" 
+  exit 1
+}
+
+PFLAG=0
+NFLAG=0
+VECTOR_FLAG=0
+
+while getopts i:u:p:U:R:P:N:L:I:D? arg
+do
+  case $arg in
+    i) INTERVAL_SECS=$OPTARG
+       echo $INTERVAL_SECS | grep '^[0-9]*$' >/dev/null 2>&1
+       if [ $? != 0 ];then
+         display_help_and_exit "Integer expression must required with -i option!"
+       fi
+       ;;
+    P) PFLAG=1;
+       POSITIVE_FILTERS="$OPTARG";; # Show these data. By Default 'ALL'
+    N) NFLAG=1;
+       NEGATIVE_FILTERS="$OPTARG";;  # Do not show these data
+    u) USER_NAME="$OPTARG";;
+    p) PASSWORD="$OPTARG";;
+    U) URL="$OPTARG";;
+    R) REPOSITORY="$OPTARG";;
+    I) INSTANCE="$OPTARG";;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ];then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    D) DEBUG=1;;
+    *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+debug_log "cm_cache_stats monitor called, INTERVAL_SECS = [$INTERVAL_SECS], POSITIVE_FILTERS = [$POSITIVE_FILTERS], NEGATIVE_FILTERS = [$NEGATIVE_FILTERS], USER_NAME = [$USER_NAME], PASSWORD = [$PASSWORD], URL = [$URL], VECTOR_FLAG = [$VECTOR_FLAG], REPOSITORY = [$REPOSITORY], DEBUG = [$DEBUG], INSTANCE = [$INSTANCE]"
+
+check_mandatory_options
+
+if [ $PFLAG -eq 1 -a $NFLAG -eq 1 ];then 
+  display_help_and_exit "Only one filter can be applied at a time."
+fi
+
+load_vectors
+
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list 
+  show_vectors
+else #To get data on every specified interval
+  show_data
+fi
+
+exit 0

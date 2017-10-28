@@ -1,0 +1,49 @@
+# Name - cm_iostat
+# Purpose - This is a sample custom monitor to get data from iostat command
+# It parses output of iostat and outputs all data in one line
+# Option - 'Run Every Time'
+# GDF - cm_iostat.gdf in netstorm machine ($NS_WDIR/samples) 
+#       Copy it to $NS_WDIR/sys to use this GDF file
+# Keyword - 
+# CUSTOM_MONITOR /opt/cavisson/monitors/samples/cm_iostat cm_iostat.gdf 1
+#
+# iostat command output -
+#[netstorm@netstorm1 src]$ iostat
+#Linux 2.6.17-FC4_CAV5 (netstorm1)       11/16/2007
+#
+#avg-cpu:  %user   %nice    %sys %iowait   %idle
+#           0.51    0.01    0.23    0.16   99.08
+#
+#Device:            tps   Blk_read/s   Blk_wrtn/s   Blk_read   Blk_wrtn
+#sda               2.37        36.88        63.27     696443    1194669
+#dm-0              8.78        36.76        63.27     694034    1194640
+#dm-1              0.00         0.00         0.00          8          0
+#
+# Custom Monitor Output - 
+# 50.00 1.00 23.00 16.00 9909.00 239.00 3542.00 6620.00 70724300.00 132174900.00 911.00 3530.00 6620.00 70483400.00 132172000.00 0.00 0.00 0.00 800.00 0.00
+#
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+
+#output=`iostat|awk NF|awk 'NR >1'|awk '{if(NR == 2){printf("%2.2f %2.2f %2.2f %2.2f %2.2f\t", $1*100, $2*100, $3*100, $4*100, $5*100)}else if(NR > 3){ printf("%2.2f %2.2f %2.2f %2.2f %2.2f\t", $2*100, $3*100, $4*100, $5*100, $6*100)}}'`
+
+#Fixed Bug:1374
+output=`iostat|awk NF|awk 'NR >1'|awk '{if(NR == 2){printf("%2.2f %2.2f %2.2f %2.2f %2.2f %2.2f\t", $1*100, $2*100, $3*100, $4*100, $5*100, $6*100)}else if(NR > 3){ printf("%2.2f %2.2f %2.2f %2.2f %2.2f\t", $2*100, $3*100, $4*100, $5*100, $6*100)}}'`
+
+echo $output
+
+exit 0

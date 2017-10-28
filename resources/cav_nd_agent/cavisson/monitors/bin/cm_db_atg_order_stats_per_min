@@ -1,0 +1,1080 @@
+################################################################################
+## Name    : cm_db_atg_order_stats
+## Purpose : This is a cumstom monitor to get number of orders for ATG in each order state. Currently it recognises following states
+##            SUBMITTED
+##            INCOMPLETE
+##            PENDING_SUBMISSION
+##            PENDING_FRAUD_CHECK
+##            NO_PENDING_ACTION
+##            PROCESSING
+##            PENDING_PROCESSING
+##            FAILED
+##            BLOCKED 
+##            CANCELLED 
+##            REJECTED 
+##            IN_FULFILLMENT 
+##            FAILED_APPROVAL
+##            OTHERS             (If state is found other than above mentioned states it will be taken as OTHERS.)
+##            TOTAL              (Number of order in all states)
+## Option  : 'Run Once'
+## GDF     : cm_db_atg_order_stats.gdf in netstorm machine ($NS_WDIR/sys)
+## Keyword :
+##           CUSTOM_MONITOR 192.168.147.171 cm_db_atg_order_stats.gdf Orace_order_state_vector 2 cm_db_atg_order_stats -i 10 -U <USER> 
+##           -K <KEY/PASSWORD> -O <ORACLE_HOME> -H <HOST/IP> -P <PORT> -S <SID> -I <Instance-Name> -D
+##
+##           Also this file can be used to generate reports for order submitted between date/time
+##           -r option will generate reports for order submitted in previous day.
+##           With -r you can also use -s and -e option to specify start date/time  and end date/time
+##           Usage:
+##           cm_db_atg_order_stats -U <USER> -K <KEY/PASSWORD> -O <ORACLE_HOME> -H <HOST/IP> -P <PORT> -S <SID> -I <Instance-Name>
+##           -r -s "04-AUG-2013 02:00:00.000000 AM" -e "04-AUG-2013 04:00:00.000000 AM"
+##
+##
+###SQL> desc atgprdcore.dcspp_order
+## Name                                    Null?    Type
+## ----------------------------------------- -------- ----------------------------
+## ORDER_ID                                NOT NULL VARCHAR2(40 CHAR)
+## TYPE                                    NOT NULL NUMBER(38)
+## VERSION                                 NOT NULL NUMBER(38)
+## ORDER_CLASS_TYPE                                 VARCHAR2(40 CHAR)
+## PROFILE_ID                                       VARCHAR2(40 CHAR)
+## DESCRIPTION                                      VARCHAR2(64 CHAR)
+## STATE                                                    VARCHAR2(40 CHAR)
+## STATE_DETAIL                                     VARCHAR2(254 CHAR)
+## CREATED_BY_ORDER                                 VARCHAR2(40 CHAR)
+## ORIGIN_OF_ORDER                                  NUMBER(10)
+## CREATION_DATE                                            TIMESTAMP(6)
+## SUBMITTED_DATE                                   TIMESTAMP(6)
+## LAST_MODIFIED_DATE                               TIMESTAMP(6)
+## COMPLETED_DATE                                   TIMESTAMP(6)
+## PRICE_INFO                                       VARCHAR2(40 CHAR)
+## TAX_PRICE_INFO                                   VARCHAR2(40 CHAR)
+## EXPLICITLY_SAVED                                 NUMBER(1)
+## AGENT_ID                                         VARCHAR2(40 CHAR)
+## SALES_CHANNEL                                            NUMBER(10)
+## CREATION_SITE_ID                                 VARCHAR2(40 CHAR)
+## SITE_ID                                          VARCHAR2(40 CHAR)
+## GWP                                              NUMBER(1)
+##
+##
+## Return  : On success  - 0
+##           On failure  - 1
+## Date    : thursday, 18 July 2013
+################################################################################
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+ . $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+export  LD_LIBRARY_PATH=/usr/lib/oracle/11.2/client64/lib
+
+initialize_states()
+{
+  #This array will contain TOTAL_SUBMITTED_ORDERS from Webstore, CSC, Kiosk, Mobile.
+  TOTAL_SUBMITTED_ORDERS=(0 0 0 0 0)
+  #This valiable contains total submitted orders from all origins.
+  ALL_SUBMITTED_ORDERS=0
+  #This array will contain TOTAL_COMPLETED_ORDERS from Webstore, CSC, Kiosk, Mobile.
+  TOTAL_COMPLETED_ORDERS=(0 0 0 0 0)
+  #This valiable contains total completed orders from all origins.
+  ALL_COMPLETED_ORDERS=0
+  TOTAL_REVENUE=0
+
+  SUBMITTED=0
+  INCOMPLETE=0
+  PENDING_SUBMISSION=0
+  PENDING_FRAUD_CHECK=0
+  NO_PENDING_ACTION=0
+  PROCESSING=0
+  PENDING_PROCESSING=0
+  FAILED=0
+  BLOCKED=0 
+  CANCELLED=0 
+  REJECTED=0 
+  IN_FULFILLMENT=0 
+  FAILED_APPROVAL=0
+  OTHERS=0
+  TOTAL=0
+  WEBSTORE=0
+  CSC=0
+  KIOSK=0
+  MOBILE=0  
+  CUR_DATE=`date +%d/%m/%Y`
+}
+
+set_up_env() 
+{
+  DEBUG=0
+  INTERVAL=300   #default will be 5 minute
+  HOST=""
+  PORT=""
+  SID=""
+  INSTANCE=""
+  USER=""
+  PASSWORD=""
+  REPORT=0
+  YEST_START_DT=""
+  YEST_END_DT=""
+  TODAY_START_DT=""
+  TODAY_END_DT=""
+  ## CURRENTLY SET TO 5 MIN
+  QUERY_START_DT=""
+  QUERY_END_DT=""
+  ORACLE_START_DT=""
+  ORACLE_END_DT=""
+  #export ORACLE_HOME=/ora/orasoft/oracle/product/11.2.0/db11.2.0.3
+  #export ORACLE_HOME=/u01/app/oracle/product/11.2.0/dbhome_1
+  #SQL_PLUS_BIN=$ORACLE_HOME/bin/sqlplus
+  IS_FIRST_SAMPLE="0"
+  PRE_SUBMITTED_ORDERS=(0 0 0 0 0)
+  PRE_COMPLETED_ORDERS=(0 0 0 0 0)
+  PRE_ALL_COMPLETED_ORDERS=0
+  PRE_ALL_SUBMITTED_ORDERS=0
+  PRE_REVENUE=0
+  PRE_WEBSTORE=0
+  PRE_CSC=0
+  PRE_KIOSK=0
+  PRE_MOBILE=0
+  START_DATE=`date +%d/%m/%Y`
+  SAMPLES_PER_HOUR=`expr 3600 / $INTERVAL`
+  FILE_TARGET_REVENUE="/home/netstorm/KohlsJunk/atg_rev_target.dat"
+  TARGET_REVENUE=0
+  QUERY_STATS=""
+  QUERY_OUT_FILE="$CAV_MON_TMP_DIR/cm_db_atg_order_stats.out.$$"
+  QUERY_OUT_FILE_AWK="$CAV_MON_TMP_DIR/state_test.out.2.$$"
+  QUERY_ERR_FILE="$CAV_MON_TMP_DIR/cm_db_atg_order_stats.err.$$"
+  REPORT_CSV_FILE="$CAV_MON_TMP_DIR/cm_db_atg_order_stats_$$.csv"
+ 
+  initialize_states
+ 
+}
+
+
+ns_log_event()
+{
+  VERSION="1.0"
+  SEVERITY="$1"
+  EVENT_MSG="$2"
+}
+
+set_error_and_debug_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_db_atg_order_stats_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_db_atg_order_stats__"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+    TRACE_LOG_FILE="$CAV_MON_HOME/logs/cm_db_atg_order_stats__"$MON_TEST_RUN"_"$VECTOR_NAME"_trace.log"
+  else
+    DEBUG_LOG_FILE="/tmp/cm_db_atg_order_stats_debug_log.$$"
+    ERROR_LOG_FILE="/tmp/cm_db_atg_order_stats_error_log.$$"
+    TRACE_LOG_FILE="/tmp/cm_db_atg_order_stats_trace_log.$$"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+error_log()
+{
+  ns_log_event "Major" "$*" 
+  echo `date +'%F %X'`"|" $* >> $ERROR_LOG_FILE
+}
+
+debug_log()
+{
+    if [ "X$DEBUG" = "X0" ]; then
+      return
+    else
+      echo `date +'%F %X'`"|" $* >>$DEBUG_LOG_FILE 
+    fi
+}
+
+trace_log()
+{
+  TRACE_LEVEL=$1
+
+  if [ $TRACE -lt $TRACE_LEVEL ]; then
+    return
+  else
+    echo `date +'%F %X'`"|" $2 >>$TRACE_LOG_FILE 
+
+    #file rollback
+    TL_FILE_SIZE=`ls -l $TRACE_LOG_FILE  | awk -F' ' '{print $5}'`
+    if [ $TL_FILE_SIZE -gt 104857600 ]; then  #100 MB
+      mv $TRACE_LOG_FILE ${TRACE_LOG_FILE}.prev
+    fi
+  fi
+
+  if [ "X$3" != "X" ]; then
+    $3 >>$TRACE_LOG_FILE
+  fi
+}
+
+#Function to remove output files. 
+remove_files()
+{
+  trace_log 2 "Removing files"
+
+  rm -f $QUERY_ERR_FILE $QUERY_OUT_FILE $QUERY_OUT_FILE_AWK 
+}
+
+get_start_and_end_date()
+{
+
+  QUERY_START_DT="$(date --date "$QUERY_START_DT $INTERVAL sec" +'%d-%b-%Y %r')"
+  QUERY_END_DT="$(date --date "$QUERY_END_DT $INTERVAL sec" +'%d-%b-%Y %r')"
+}
+
+format_to_oracle()
+{
+
+  QUERY_START_DT="$(date --date "$QUERY_START_DT" +'%d-%b-%Y %r' | cut -d ' ' -f -2)"
+  START_DT_AM_PM="$(date --date "$QUERY_START_DT" +'%d-%b-%Y %r' | cut -d ' ' -f 3)"
+  ORACLE_START_DT="$QUERY_START_DT.000000000 $START_DT_AM_PM"
+  ORACLE_START_DT=`echo "$ORACLE_START_DT" | tr ':' '.'`
+
+  QUERY_END_DT="$(date --date "$QUERY_END_DT" +'%d-%b-%Y %r' | cut -d ' ' -f -2)"
+  END_DT_AM_PM="$(date --date "$QUERY_END_DT" +'%d-%b-%Y %r' | cut -d ' ' -f 3)"
+  ORACLE_END_DT="$QUERY_END_DT.000000000 $END_DT_AM_PM"
+  ORACLE_END_DT=`echo "$ORACLE_END_DT" | tr ':' '.'`
+
+
+}
+
+
+#Function to run database queries
+make_and_run_query_oracle()
+{
+  debug_log "run_query called."
+  trace_log 2 "OK flag is $ALL_OK. Running query : $QUERY_FOR_STATE"
+
+  #export ORACLE_HOME=$ORACLE_HOME
+  #QUERY_FOR_STATE="select upper(state), count(*) from atgprdcore.dcspp_order group by upper(state);"
+  #QUERY_SET_PAGESIZE=" set pagesize 50;"
+  #TODO TEST IT
+  #$SQL_PLUS_BIN ATGTEAM/datar3ad@"(description=(address=(host=database.kohlsll.com)(protocol=tcp)(port=1521))(connect_data=(sid=OT0140)(instancename=OT0140)))" >$QUERY_OUT_FILE 2>$QUERY_ERR_FILE <<+
+
+  QUERY_START_TIMESTAMP_IN_MSECS=`echo $(($(date +%s%N)/1000000))`
+
+  $SQL_PLUS_BIN $USER/$PASSWORD@"(description=(address=(host=$HOST)(protocol=tcp)(port=$PORT))(connect_data=(sid=$SID)(instancename=$Instance-Name)))" >>$QUERY_OUT_FILE 2>>$QUERY_ERR_FILE <<+ 
+$QUERY_SET_PAGESIZE
+$QUERY_SET_FEEDBACK
+$QUERY_FOR_STATE
+;
++
+
+  QUERY_END_TIMESTAMP_IN_MSECS=`echo $(($(date +%s%N)/1000000))`
+  TIMESTAMP_DIFF_IN_MSECS=`echo $(( $QUERY_END_TIMESTAMP_IN_MSECS - $QUERY_START_TIMESTAMP_IN_MSECS ))`
+  TIMESTAMP_DIFF=`expr $TIMESTAMP_DIFF_IN_MSECS / 1000`
+
+  trace_log 2 "Time taken by query in msecs :  $TIMESTAMP_DIFF_IN_MSECS , in secs : $TIMESTAMP_DIFF" 
+
+  trace_log 2 "Query output :"  "cat $QUERY_OUT_FILE" 
+
+  FILE_SIZE=`ls -l $QUERY_ERR_FILE  | awk -F' ' '{print $5}'`
+
+  grep "^ERROR" $QUERY_OUT_FILE 2>/dev/null
+  if [ $? = 0 -o $FILE_SIZE -ne 0 ]; then
+    ALL_OK=0
+    trace_log 1 "OK flag is $ALL_OK. Error is :" "cat $QUERY_ERR_FILE"
+    trace_log 1 "OK flag is $ALL_OK. Error is :" "cat $QUERY_OUT_FILE"
+  fi  
+}
+
+process_data()
+{
+  ## Select text from sql query output and put in other file
+  echo `awk '/-----------------------/ {P=1; next} /rows selected|row selected/ {exit} P' $QUERY_OUT_FILE | awk 'NF'` > $QUERY_OUT_FILE_AWK
+
+  ## Populate array from file created in above step
+  OUTPUT=($(< $QUERY_OUT_FILE_AWK))
+  total=${#OUTPUT[*]}
+
+  ## Process array to find intrested order state. The states in which we are not intrested is 
+  ## denoted as others.
+  for (( i=0; i<=$(( $total -1 )); i+=2 ))
+    do
+      if [ ${OUTPUT[$i]} = "SUBMITTED" ]
+      then
+        SUBMITTED=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $SUBMITTED`
+      elif [ ${OUTPUT[$i]} = "INCOMPLETE" ]
+      then
+        INCOMPLETE=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $INCOMPLETE`
+      elif [ ${OUTPUT[$i]} = "PENDING_SUBMISSION" ]
+      then
+        PENDING_SUBMISSION=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $PENDING_SUBMISSION`
+      elif [ ${OUTPUT[$i]} = "PENDING_FRAUD_CHECK" ]
+      then
+        PENDING_FRAUD_CHECK=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $PENDING_FRAUD_CHECK`
+      elif [ ${OUTPUT[$i]} = "NO_PENDING_ACTION" ]
+      then
+        NO_PENDING_ACTION=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $NO_PENDING_ACTION`
+      elif [ ${OUTPUT[$i]} = "PROCESSING" ]
+      then
+        PROCESSING=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $PROCESSING`
+      elif [ ${OUTPUT[$i]} = "PENDING_PROCESSING" ]
+      then
+        PENDING_PROCESSING=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $PENDING_PROCESSING`
+      elif [ ${OUTPUT[$i]} = "FAILED" ]
+      then
+        FAILED=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $FAILED`
+      elif [ ${OUTPUT[$i]} = "BLOCKED" ]
+      then
+        BLOCKED=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $BLOCKED`
+      elif [ ${OUTPUT[$i]} = "CANCELLED" ]
+      then
+        CANCELLED=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $CANCELLED`
+      elif [ ${OUTPUT[$i]} = "REJECTED" ]
+      then
+        REJECTED=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $REJECTED`
+      elif [ ${OUTPUT[$i]} = "IN_FULFILLMENT" ]
+      then
+        IN_FULFILLMENT=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $IN_FULFILLMENT`
+      elif [ ${OUTPUT[$i]} = "FAILED_APPROVAL" ]
+      then
+        FAILED_APPROVAL=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $FAILED_APPROVAL`
+      else
+        TEMP=${OUTPUT[`expr $i + 1`]}
+        TOTAL=`expr $TOTAL + $TEMP`
+        OTHERS=`expr $TEMP + $OTHERS`
+        #OTHERS=`expr $OTHERS + ${OUTPUT[`expr $i + 1`]}`
+      fi
+  done
+    
+    if [ $BC_AVAILABLE -eq 1 ];then
+      SUBMITTED=`echo "$SUBMITTED / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      SUBMITTED=`awk -v "var1=$SUBMITTED" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      INCOMPLETE=`echo "$INCOMPLETE / $QUERY_END_TIME_IN_MINS " | bc`
+    else 
+      INCOMPLETE=`awk -v "var1=$INCOMPLETE" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      PENDING_SUBMISSION=`echo "$PENDING_SUBMISSION / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      PENDING_SUBMISSION=`awk -v "var1=$PENDING_SUBMISSION" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'` 
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      PENDING_FRAUD_CHECK=`echo "$PENDING_FRAUD_CHECK / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      PENDING_FRAUD_CHECK=`awk -v "var1=$PENDING_FRAUD_CHECK" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'` 
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      NO_PENDING_ACTION=`echo "$NO_PENDING_ACTION / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      NO_PENDING_ACTION=`awk -v "var1=$NO_PENDING_ACTION" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      PROCESSING=`echo "$PROCESSING / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      PROCESSING=`awk -v "var1=$PROCESSING" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'` 
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      PENDING_PROCESSING=`echo "$PENDING_PROCESSING / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      PENDING_PROCESSING=`awk -v "var1=$PENDING_PROCESSING" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'` 
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      FAILED=`echo "$FAILED / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      FAILED=`awk -v "var1=$FAILED" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      BLOCKED=`echo "$BLOCKED  / $QUERY_END_TIME_IN_MINS " | bc`
+    else 
+      BLOCKED=`awk -v "var1=$BLOCKED" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'` 
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      CANCELLED=`echo "$CANCELLED / $QUERY_END_TIME_IN_MINS " | bc`
+    else 
+      CANCELLED=`awk -v "var1=$CANCELLED" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'` 
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      REJECTED=`echo "$REJECTED / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      REJECTED=`awk -v "var1=$REJECTED" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      IN_FULFILLMENT=`echo "$IN_FULFILLMENT / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      N_FULFILLMENT=`awk -v "var1=$IN_FULFILLMENT" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      FAILED_APPROVAL=`echo "$FAILED_APPROVAL / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      FAILED_APPROVAL=`awk -v "var1=$FAILED_APPROVAL" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      OTHERS=`echo "$OTHERS / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      OTHERS=`awk -v "var1=$OTHERS" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      TOTAL=`echo "$TOTAL / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      TOTAL=`awk -v "var1=$TOTAL" -v "var2=$INTERVAL" 'BEGIN{printf "%d", (var1/(var2/60))}'`      
+    fi
+
+}
+
+process_completed_orders_from_csv()
+{
+  TOTAL_COMPLETED_ORDERS[0]=`echo $CSV_VALUE | awk -F',' '{print $6}'`
+  ALL_COMPLETED_ORDERS=`expr $ALL_COMPLETED_ORDERS + ${TOTAL_COMPLETED_ORDERS[0]}`
+
+  TOTAL_COMPLETED_ORDERS[2]=`echo $CSV_VALUE | awk -F',' '{print $7}'`
+  ALL_COMPLETED_ORDERS=`expr $ALL_COMPLETED_ORDERS + ${TOTAL_COMPLETED_ORDERS[2]}`
+
+  TOTAL_COMPLETED_ORDERS[3]=`echo $CSV_VALUE | awk -F',' '{print $8}'`
+  ALL_COMPLETED_ORDERS=`expr $ALL_COMPLETED_ORDERS + ${TOTAL_COMPLETED_ORDERS[3]}`
+
+  TOTAL_COMPLETED_ORDERS[4]=`echo $CSV_VALUE | awk -F',' '{print $9}'`
+  ALL_COMPLETED_ORDERS=`expr $ALL_COMPLETED_ORDERS + ${TOTAL_COMPLETED_ORDERS[4]}`
+}
+
+process_completed_orders()
+{
+  ## Select text from sql query output and put in other file
+  echo `awk '/--------/ {P=1; next} /rows selected|row selected/ {exit} P' $QUERY_OUT_FILE | awk 'NF'` > $QUERY_OUT_FILE_AWK
+
+  ## Populate array from file created in above step
+  OUTPUT=($(< $QUERY_OUT_FILE_AWK))
+  total=${#OUTPUT[*]}
+
+  ## Process array to find intrested order state. The states in which we are not intrested is 
+  ## denoted as others.
+  for (( i=0; i<=$(( $total -1 )); i+=3 ))
+    do
+      if [ ${OUTPUT[$i]} = "NO_PENDING_ACTION" ]
+      then
+        idx=${OUTPUT[`expr $i + 2`]}
+        TOTAL_COMPLETED_ORDERS[$idx]=${OUTPUT[`expr $i + 1`]}
+        ALL_COMPLETED_ORDERS=`expr $ALL_COMPLETED_ORDERS + ${TOTAL_COMPLETED_ORDERS[$idx]}`
+      fi
+  done
+
+}
+
+process_submitted_orders_from_csv()
+{
+  TOTAL_SUBMITTED_ORDERS[0]=`echo $CSV_VALUE | awk -F',' '{print $6}'`
+  ALL_SUBMITTED_ORDERS=`expr $ALL_SUBMITTED_ORDERS + ${TOTAL_SUBMITTED_ORDERS[0]}`
+
+  TOTAL_SUBMITTED_ORDERS[2]=`echo $CSV_VALUE | awk -F',' '{print $7}'`
+  ALL_SUBMITTED_ORDERS=`expr $ALL_SUBMITTED_ORDERS + ${TOTAL_SUBMITTED_ORDERS[2]}`
+
+  TOTAL_SUBMITTED_ORDERS[3]=`echo $CSV_VALUE | awk -F',' '{print $8}'`
+  ALL_SUBMITTED_ORDERS=`expr $ALL_SUBMITTED_ORDERS + ${TOTAL_SUBMITTED_ORDERS[3]}`
+
+  TOTAL_SUBMITTED_ORDERS[4]=`echo $CSV_VALUE | awk -F',' '{print $9}'`
+  ALL_SUBMITTED_ORDERS=`expr $ALL_SUBMITTED_ORDERS + ${TOTAL_SUBMITTED_ORDERS[4]}`
+}
+
+process_submitted_orders()
+{
+  ## Select text from sql query output and put in other file
+  echo `awk '/--------/ {P=1; next} /rows selected|row selected/ {exit} P' $QUERY_OUT_FILE | awk 'NF'` > $QUERY_OUT_FILE_AWK
+
+  ## Populate array from file created in above step
+  OUTPUT=($(< $QUERY_OUT_FILE_AWK))
+  total=${#OUTPUT[*]}
+
+  ## Process array to find intrested order state. The states in which we are not intrested is 
+  ## denoted as others.
+  for (( i=0; i<=$(( $total -1 )); i+=3 ))
+    do
+      if [ ${OUTPUT[$i]} = "SUBMITTED" ]
+      then
+        idx=${OUTPUT[`expr $i + 2`]}
+        TOTAL_SUBMITTED_ORDERS[$idx]=${OUTPUT[`expr $i + 1`]}
+        ALL_SUBMITTED_ORDERS=`expr $ALL_SUBMITTED_ORDERS + ${TOTAL_SUBMITTED_ORDERS[$idx]}`
+      fi
+  done
+
+
+}
+
+process_revenue_frm_csv()
+{
+  WEBSTORE=`echo $CSV_VALUE | awk -F',' '{print $2}'`
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TOTAL_REVENUE=`echo "$TOTAL_REVENUE + $WEBSTORE" |bc`
+  else
+    TOTAL_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$WEBSTORE" 'BEGIN{printf "%d", (var1 + var2)}'`
+  fi
+
+  CSC=`echo $CSV_VALUE | awk -F',' '{print $3}'`
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TOTAL_REVENUE=`echo "$TOTAL_REVENUE + $CSC" |bc`
+  else
+    TOTAL_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$CSC" 'BEGIN{printf "%d", (var1 + var2)}'`
+  fi
+
+  KIOSK=`echo $CSV_VALUE | awk -F',' '{print $4}'`
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TOTAL_REVENUE=`echo "$TOTAL_REVENUE + $KIOSK" |bc`
+  else
+    TOTAL_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$KIOSK" 'BEGIN{printf "%d", (var1 + var2)}'`
+  fi
+
+  MOBILE=`echo $CSV_VALUE | awk -F',' '{print $5}'`
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TOTAL_REVENUE=`echo "$TOTAL_REVENUE + $MOBILE" |bc`
+  else
+    TOTAL_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$MOBILE" 'BEGIN{printf "%d", (var1 + var2)}'`
+  fi
+}
+
+process_revenue()
+{
+  ## Select text from sql query output and put in other file
+  echo `awk '/----------/ {P=1; next} /rows selected|row selected/ {exit} P' $QUERY_OUT_FILE | awk 'NF'` > $QUERY_OUT_FILE_AWK
+
+  ## Populate array from file created in above step
+  OUTPUT=($(< $QUERY_OUT_FILE_AWK))
+  total=${#OUTPUT[*]}
+  ## Process array to find intrested order state. The states in which we are not intrested is 
+  ## denoted as others.
+  #WEBSTORE, CSC, KIOSK, MOBILE variables represent respective revenues.
+  for (( i=0; i<=$(( $total -1 )); i+=2 ))
+    do
+      if [ ${OUTPUT[$i]} = "0" ]
+      then
+        WEBSTORE=${OUTPUT[`expr $i + 1`]}
+        if [ $BC_AVAILABLE -eq 1 ];then
+          TOTAL_REVENUE=`echo "$TOTAL_REVENUE + $WEBSTORE" |bc`
+        else
+          TOTAL_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$WEBSTORE" 'BEGIN{printf "%d", (var1 + var2)}'`
+        fi
+      elif [ ${OUTPUT[$i]} = "2" ]
+      then
+        CSC=${OUTPUT[`expr $i + 1`]}
+        if [ $BC_AVAILABLE -eq 1 ];then
+          TOTAL_REVENUE=`echo "$TOTAL_REVENUE + $CSC" |bc`
+        else
+          TOTAL_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$CSC" 'BEGIN{printf "%d", (var1 + var2)}'`
+        fi
+      elif [ ${OUTPUT[$i]} = "3" ]
+      then
+        KIOSK=${OUTPUT[`expr $i + 1`]}
+        if [ $BC_AVAILABLE -eq 1 ];then
+          TOTAL_REVENUE=`echo "$TOTAL_REVENUE + $KIOSK" | bc`
+        else
+          TOTAL_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$KIOSK" 'BEGIN{printf "%d", (var1 + var2)}'`
+        fi
+      elif [ ${OUTPUT[$i]} = "4" ]
+      then
+        MOBILE=${OUTPUT[`expr $i + 1`]}
+        if [ $BC_AVAILABLE -eq 1 ];then
+          TOTAL_REVENUE=`echo "$TOTAL_REVENUE + $MOBILE" |bc`
+        else
+          TOTAL_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$MOBILE" 'BEGIN{printf "%d", (var1 + var2)}'`
+        fi
+      fi
+  done 
+}
+
+print_data()
+{
+
+  ## Display output
+  if [ "$IS_FIRST_SAMPLE" = "0" ];then #monitor first sample
+    echo 0 $ALL_SUBMITTED_ORDERS 0 $ALL_COMPLETED_ORDERS 0 $TOTAL_REVENUE $TARGET_REVENUE $LY_REVENUE 0 ${TOTAL_SUBMITTED_ORDERS[0]} 0 ${TOTAL_SUBMITTED_ORDERS[2]} 0 ${TOTAL_SUBMITTED_ORDERS[3]} 0 ${TOTAL_SUBMITTED_ORDERS[4]} 0 $WEBSTORE 0 $CSC 0 $KIOSK 0 $MOBILE 0 ${TOTAL_COMPLETED_ORDERS[0]} 0 ${TOTAL_COMPLETED_ORDERS[2]} 0 ${TOTAL_COMPLETED_ORDERS[3]} 0 ${TOTAL_COMPLETED_ORDERS[4]} $INCOMPLETE $PENDING_SUBMISSION $PENDING_FRAUD_CHECK $PROCESSING $PENDING_PROCESSING $FAILED $BLOCKED $CANCELLED $REJECTED $IN_FULFILLMENT $FAILED_APPROVAL $OTHERS
+  elif [ "$IS_FIRST_SAMPLE" = "2" ];then #first sample after midnight & before 1 minute from midnight
+    echo $ALL_SUBMITTED_ORDERS $ALL_SUBMITTED_ORDERS $ALL_COMPLETED_ORDERS $ALL_COMPLETED_ORDERS $TOTAL_REVENUE $TOTAL_REVENUE $TARGET_REVENUE $LY_REVENUE ${TOTAL_SUBMITTED_ORDERS[0]} ${TOTAL_SUBMITTED_ORDERS[0]} ${TOTAL_SUBMITTED_ORDERS[2]} ${TOTAL_SUBMITTED_ORDERS[2]} ${TOTAL_SUBMITTED_ORDERS[3]} ${TOTAL_SUBMITTED_ORDERS[3]} ${TOTAL_SUBMITTED_ORDERS[4]} ${TOTAL_SUBMITTED_ORDERS[4]} $WEBSTORE $WEBSTORE $CSC $CSC $KIOSK $KIOSK $MOBILE $MOBILE ${TOTAL_COMPLETED_ORDERS[0]} ${TOTAL_COMPLETED_ORDERS[0]} ${TOTAL_COMPLETED_ORDERS[2]} ${TOTAL_COMPLETED_ORDERS[2]} ${TOTAL_COMPLETED_ORDERS[3]} ${TOTAL_COMPLETED_ORDERS[3]} ${TOTAL_COMPLETED_ORDERS[4]} ${TOTAL_COMPLETED_ORDERS[4]} $INCOMPLETE $PENDING_SUBMISSION $PENDING_FRAUD_CHECK $PROCESSING $PENDING_PROCESSING $FAILED $BLOCKED $CANCELLED $REJECTED $IN_FULFILLMENT $FAILED_APPROVAL $OTHERS
+
+    IS_FIRST_SAMPLE=1 #reset for second & rest samples 
+    trace_log 1 "Now IS_FIRST_SAMPLE is reset to $IS_FIRST_SAMPLE"
+  else #from second samples onward 
+    for idx in 0 2 3 4
+    do
+      if [ $BC_AVAILABLE -eq 1 ];then
+        DIFF_SUBMITTED[$idx]=`echo "(${TOTAL_SUBMITTED_ORDERS[$idx]} - ${PRE_SUBMITTED_ORDERS[$idx]}) / $QUERY_END_TIME_IN_MINS " | bc`
+        DIFF_COMPLETED[$idx]=`echo "(${TOTAL_COMPLETED_ORDERS[$idx]} - ${PRE_COMPLETED_ORDERS[$idx]}) / $QUERY_END_TIME_IN_MINS " | bc`
+      else
+        DIFF_SUBMITTED[$idx]=`awk -v "var1=${TOTAL_SUBMITTED_ORDERS[$idx]}" -v "var2=${PRE_SUBMITTED_ORDERS[$idx]}" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'` 
+        DIFF_COMPLETED[$idx]=`awk -v "var1=${TOTAL_COMPLETED_ORDERS[$idx]}" -v "var2=${PRE_COMPLETED_ORDERS[$idx]}" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'`
+      fi
+    done
+    if [ $BC_AVAILABLE -eq 1 ];then
+      DIFF_ALL_SUBMITTED=`echo "($ALL_SUBMITTED_ORDERS - $PRE_ALL_SUBMITTED_ORDERS) / $QUERY_END_TIME_IN_MINS " | bc`
+      DIFF_ALL_COMPLETED=`echo "($ALL_COMPLETED_ORDERS - $PRE_ALL_COMPLETED_ORDERS) / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      DIFF_ALL_SUBMITTED=`awk -v "var1=$ALL_SUBMITTED_ORDERS" -v "var2=$PRE_ALL_SUBMITTED_ORDERS" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'`
+      DIFF_ALL_COMPLETED=`awk -v "var1=$ALL_COMPLETED_ORDERS" -v "var2=$PRE_ALL_COMPLETED_ORDERS" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'`
+    fi
+
+    if [ $BC_AVAILABLE -eq 1 ];then
+      DIFF_REVENUE=`echo "($TOTAL_REVENUE - $PRE_REVENUE) / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      DIFF_REVENUE=`awk -v "var1=$TOTAL_REVENUE" -v "var2=$PRE_REVENUE" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'` 
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      DIFF_WEBSTORE=`echo "($WEBSTORE - $PRE_WEBSTORE) / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      DIFF_WEBSTORE=`awk -v "var1=$WEBSTORE" -v "var2=$PRE_WEBSTORE" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      DIFF_CSC=`echo "($CSC - $PRE_CSC) / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      DIFF_CSC=`awk -v "var1=$CSC" -v "var2=$PRE_CSC" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      DIFF_KIOSK=`echo "($KIOSK - $PRE_KIOSK) / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      DIFF_KIOSK=`awk -v "var1=$KIOSK" -v "var2=$PRE_KIOSK" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'`
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      DIFF_MOBILE=`echo "($MOBILE - $PRE_MOBILE) / $QUERY_END_TIME_IN_MINS " | bc`
+    else
+      DIFF_MOBILE=`awk -v "var1=$MOBILE" -v "var2=$PRE_MOBILE" -v "var3=$INTERVAL" 'BEGIN{printf "%d", (var1-var2)/(var3/60)}'`
+    fi
+
+    
+   #Submitted Orders/Min        Total Submitted Orders        Completed Orders/Min        Total Completed Orders        Orders Revenue($)/Min        Total Revenue($)        Target Revenue($)        Last Year Revenue($)        Webstore Submitted Orders/Min        Total Webstore Submitted Orders        CSC Submitted Orders/Min        Total CSC Submitted Orders        Kiosk Submitted Orders/Min        Total Kiosk Submitted Orders        Mobile Submitted Orders/Min        Total Mobile Submitted Orders        Webstore Revenue($)/Min        Total Webstore Revenue($)        CSC/CC Revenue($)/Min        Total CSC/CC Revenue($)        Kiosk Revenue($)/Min        Total Kiosk Revenue($)        Mobile Revenue($)/Min        Total Mobile Revenue($)        Webstore Completed Orders/Min        Total Webstore Completed Orders        CSC/CC Completed Orders/Min        Total CSC/CC Completed Orders        Kiosk Completed Orders/Min        Total Kiosk Completed Orders        Mobile Completed Orders/Min        Total Mobile Completed Orders        Incomplete Orders/Min        Submission Pending Orders/Min        Fraud Check Pending Orders/Min        Processing Orders/Min        Processing Pending Orders/Min        Failed Orders/Min        Blocked Orders/Min        Cancelled Orders/Min        Rejected Orders/Min        In Fulfillment Orders/Min        Failed Approval Orders/Min        Other State Orders/Min
+
+    echo $DIFF_ALL_SUBMITTED $ALL_SUBMITTED_ORDERS $DIFF_ALL_COMPLETED $ALL_COMPLETED_ORDERS $DIFF_REVENUE $TOTAL_REVENUE $TARGET_REVENUE $LY_REVENUE ${DIFF_SUBMITTED[0]} ${TOTAL_SUBMITTED_ORDERS[0]} ${DIFF_SUBMITTED[2]} ${TOTAL_SUBMITTED_ORDERS[2]} ${DIFF_SUBMITTED[3]} ${TOTAL_SUBMITTED_ORDERS[3]} ${DIFF_SUBMITTED[4]} ${TOTAL_SUBMITTED_ORDERS[4]} $DIFF_WEBSTORE $WEBSTORE $DIFF_CSC $CSC $DIFF_KIOSK $KIOSK $DIFF_MOBILE $MOBILE ${DIFF_COMPLETED[0]} ${TOTAL_COMPLETED_ORDERS[0]} ${DIFF_COMPLETED[2]} ${TOTAL_COMPLETED_ORDERS[2]} ${DIFF_COMPLETED[3]} ${TOTAL_COMPLETED_ORDERS[3]} ${DIFF_COMPLETED[4]} ${TOTAL_COMPLETED_ORDERS[4]} $INCOMPLETE $PENDING_SUBMISSION $PENDING_FRAUD_CHECK $PROCESSING $PENDING_PROCESSING $FAILED $BLOCKED $CANCELLED $REJECTED $IN_FULFILLMENT $FAILED_APPROVAL $OTHERS 
+  fi
+
+  for idx in 0 2 3 4
+  do
+    PRE_SUBMITTED_ORDERS[$idx]=${TOTAL_SUBMITTED_ORDERS[$idx]}
+    PRE_COMPLETED_ORDERS[$idx]=${TOTAL_COMPLETED_ORDERS[$idx]}
+  done
+  PRE_ALL_SUBMITTED_ORDERS=$ALL_SUBMITTED_ORDERS
+  PRE_ALL_COMPLETED_ORDERS=$ALL_COMPLETED_ORDERS
+  PRE_REVENUE=$TOTAL_REVENUE
+  PRE_WEBSTORE=$WEBSTORE
+  PRE_CSC=$CSC
+  PRE_KIOSK=$KIOSK
+  PRE_MOBILE=$MOBILE
+  initialize_states
+}
+
+init_target_and_ly_revenue_list()
+{
+  TARGET_REVENUE=0
+  LY_REVENUE=0
+  #Getting Target Revenue and Last Year revenue for the day
+  #If no entry for date is found then Target_REVENUE and LY_REVENUE will be 0 by default.
+  #If more than 1 entry for a date are found, then only first entry will be considered. Others will be left.
+  if [ -f "$FILE_TARGET_REVENUE" ]; then
+    TARGET_REVENUE_LIST=`grep -m 1 "^$CUR_DATE" $FILE_TARGET_REVENUE | awk -F "|" '{print $3}'` #considering only first match of date.
+    LY_REVENUE_LIST=`grep -m 1 "^$CUR_DATE" $FILE_TARGET_REVENUE | awk -F "|" '{print $4}'`    #considering only first match of date.
+    if [ -z "$TARGET_REVENUE_LIST" -o -z "$LY_REVENUE_LIST" ]; then
+      ns_log_event "Critical" "Target Revenue List for date $CUR_DATE Not found."
+    fi
+  else
+    ns_log_event "Critical" "File Not Found : $FILE_TARGET_REVENUE"
+  fi
+  
+  init_target_and_ly_revenue "0"   # "0" is passed to initialize Target Revenue
+  init_target_and_ly_revenue "1"   # "1" is passed to initialize Last Year Revenue
+}
+
+init_target_and_ly_revenue()
+{
+  REVENUE=0
+  HOUR_NUM=`date +%H`
+  MIN_NUM=`date +%M`
+  #Adding '1' because HOUR_NUM will have values between 0 and 23
+  HOUR_NUM=`expr $HOUR_NUM + 1`
+  #If 0 is passed then method will return Target Revenue; else Last Year Revenue
+  if [ "$1" = "0" ]; then
+    REVENUE_LIST="$TARGET_REVENUE_LIST"
+  else
+    REVENUE_LIST="$LY_REVENUE_LIST"  
+  fi
+
+  #Getting revenue of hours passed before test starts.
+  IDX=1
+  while [ $IDX -lt $HOUR_NUM ]; do 
+    REVENUE_SAMPLE=`echo "$REVENUE_LIST" | awk -v n=$IDX -F "," '{print $n}'`
+    if [ -z "$REVENUE_SAMPLE" ]; then     
+      ns_log_event "Critical" "Target Revenue or Last Year Revenue for Date $CUR_DATE and Hour $HOUR_NUM Not found."
+      REVENUE_SAMPLE=0
+    fi
+    if [ $BC_AVAILABLE -eq 1 ];then
+      REVENUE=`echo "$REVENUE + $REVENUE_SAMPLE"|bc`
+    else
+      REVENUE=`awk -v "var1=$REVENUE" -v "var2=$REVENUE_SAMPLE" 'BEGIN{printf "%d", (var1 + var2)}'` 
+    fi
+    IDX=`expr $IDX + 1`
+  done
+  #Adding revenue of current hour.
+  REVENUE_SAMPLE=`echo "$REVENUE_LIST" | awk -v n=$HOUR_NUM -F "," '{print $n}'`
+  if [ -z "$REVENUE_SAMPLE" ]; then
+    ns_log_event "Critical" "Target Revenue or Last Year Revenue for Date $CUR_DATE and Hour $HOUR_NUM Not found."
+    REVENUE_SAMPLE=0
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    REVENUE_SAMPLE=`echo "($REVENUE_SAMPLE * $MIN_NUM) / 60"|bc`
+  else
+    REVENUE_SAMPLE=`awk -v "var1=$REVENUE" -v "var2=$MIN_NUM" 'BEGIN{printf "%d", (var1 * var2)/60}'`
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    REVENUE=`echo "$REVENUE + $REVENUE_SAMPLE"|bc`
+  else
+    REVENUE=`awk -v "var1=$REVENUE" -v "var2=$REVENUE_SAMPLE" 'BEGIN{printf "%d", (var1 + var2)}'`
+  fi
+
+  if [ "$1" = "0" ];then
+    TARGET_REVENUE=$REVENUE
+  else
+    LY_REVENUE=$REVENUE
+  fi
+}
+
+get_target_revenue()
+{
+  HOUR_NUM=`date +%H`
+  HOUR_NUM=`expr $HOUR_NUM + 1`
+  TARGET_REVENUE_SAMPLE=`echo "$TARGET_REVENUE_LIST" | awk -v n=$HOUR_NUM -F "," '{print $n}'`
+
+  if [ -z "$TARGET_REVENUE_SAMPLE" ]; then
+    ns_log_event "Critical" "Target Revenue for Date $CUR_DATE and Hour $HOUR_NUM Not found."
+    TARGET_REVENUE_SAMPLE=0
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TARGET_REVENUE_SAMPLE=`echo "$TARGET_REVENUE_SAMPLE / $SAMPLES_PER_HOUR"|bc`
+  else
+    TARGET_REVENUE_SAMPLE=`awk -v "var1=$TARGET_REVENUE_SAMPLE" -v "var2=$SAMPLES_PER_HOUR" 'BEGIN{printf "%d", (var1 / var2)}'`
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TARGET_REVENUE=`echo "$TARGET_REVENUE + $TARGET_REVENUE_SAMPLE"|bc`  
+  else
+    TARGET_REVENUE=`awk -v "var1=$TARGET_REVENUE" -v "var2=$TARGET_REVENUE_SAMPLE" 'BEGIN{printf "%d", (var1 + var2)}'`
+  fi
+
+}
+
+
+
+get_ly_revenue()
+{
+  HOUR_NUM=`date +%H`
+  HOUR_NUM=`expr $HOUR_NUM + 1`
+  LY_REVENUE_SAMPLE=`echo "$LY_REVENUE_LIST" | awk -v n=$HOUR_NUM -F "," '{print $n}'`
+  if [ -z "$LY_REVENUE_SAMPLE" ]; then
+    ns_log_event "Critical" "Last Year Revenue for Date $CUR_DATE and Hour $HOUR_NUM Not found."
+    LY_REVENUE_SAMPLE=0
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    LY_REVENUE_SAMPLE=`echo "$LY_REVENUE_SAMPLE / $SAMPLES_PER_HOUR"|bc`
+  else
+    LY_REVENUE_SAMPLE=`awk -v "var1=$LY_REVENUE_SAMPLE" -v "var2=$SAMPLES_PER_HOUR" 'BEGIN{printf "%d", (var1 / var2)}'` 
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    LY_REVENUE=`echo "$LY_REVENUE + $LY_REVENUE_SAMPLE"|bc`
+  else
+    LY_REVENUE=`awk -v "var1=$LY_REVENUE" -v "var2=$LY_REVENUE_SAMPLE" 'BEGIN{printf "%d", (var1 + var2)}'`
+  fi
+
+} 
+ 
+reset_values_for_day()
+{
+  START_DATE="$CUR_DATE"
+  get_today_date
+  init_target_and_ly_revenue_list
+  PRE_SUBMITTED_ORDERS=(0 0 0 0 0)
+  PRE_COMPLETED_ORDERS=(0 0 0 0 0)
+  PRE_ALL_SUBMITTED_ORDERS=0
+  PRE_REVENUE=0
+  PRE_WEBSTORE=0
+  PRE_CSC=0
+  PRE_KIOSK=0
+  PRE_MOBILE=0
+  TOTAL=0
+  TOTAL_REVENUE=0
+
+  #calculate time in seconds from midnight
+  now=$(date '+%s')
+  midnight=$(date -d 'today 00:00:00' '+%s')
+  SECS_FROM_MIDNIGHT=`echo $(( now - midnight ))`
+
+  if [ $SECS_FROM_MIDNIGHT -lt 60 ]; then #if greater than or equal to 1 minute
+    IS_FIRST_SAMPLE=2
+    trace_log 1 "Seconds from midnight are less than 60 seconds. IS_FIRST_SAMPLE = $IS_FIRST_SAMPLE"
+  else
+    IS_FIRST_SAMPLE=1
+  fi
+}
+
+get_today_date()
+{
+  TODAY_START_DT="$(date +%d-%b-%Y) 12.00.00.000000000 AM"
+  TODAY_END_DT="$(date +%d-%b-%Y) 11.59.59.999999999 PM"
+}
+
+get_yesterday_date()
+{
+  YEST_START_DT="$(date --date yesterday +%d-%b-%Y) 12.00.00.000000000 AM"
+  YEST_END_DT="$(date --date yesterday +%d-%b-%Y) 11.59.59.999999999 PM"
+}
+
+check_mandatory_options()
+{
+  debug_log "Method check_mandatory_options called"
+  
+  if [ "X$USER" = "X" ];then
+    Usage "USER name is mandatory"
+  fi
+
+  if [ "X$PASSWORD" = "X" ];then
+    Usage "PASSWORD is mandatory"
+  fi
+
+  if [ "X$ORACLE_HOME" = "X" ];then
+    Usage "ORACLE_HOME is mandatory"
+  fi
+
+  if [ "X$HOST" = "X" ];then
+    Usage "HOST name is mandatory"
+  fi
+
+  if [ "X$PORT" = "X" ];then
+    Usage "port is mandatory"
+  fi
+
+  if [ "X$SID" = "X" ];then
+    Usage "SID is mandatory"
+  fi
+
+  if [ "X$INSTANCE" = "X" ];then
+    Usage "INSTANCE is mandatory"
+  fi
+}
+
+calculate_time_till_midnight()
+{
+  #calculate time in seconds till midnight
+
+  current=$(date '+%s')
+  till_midnight=$(date -d 'tomorrow 00:00:00' '+%s')
+
+  CURRENT_MIDNIGHT_DIFF=`echo $(( $till_midnight - $current ))`
+
+  SLEEP_INTERVAL=`expr $CURRENT_MIDNIGHT_DIFF % $INTERVAL`
+}
+
+Usage()
+{
+  error_log "$*"
+  error_log "Usage: cm_db_atg_order_stats -U <USER> -K <KEY/PASSWORD> -O <ORACLE_HOME>  -H <HOST/IP> -P <PORT> -S <SID> -I <Instance-Name> -i <interval in secs> -D"
+  exit -1
+}
+
+############# Function Calling ################################
+
+#Must set debug/error log file in the beginning
+set_up_env
+set_error_and_debug_log_file
+TRACE=2
+#TODO hard code file path for kohls
+CSV_FILE_PATH=""
+QUERY_END_TIME_IN_MINS=`expr $INTERVAL / 60`
+PREV_QUERY_END_TIME=0
+
+while getopts U:K:O:H:P:S:I:i:s:e:t:f:r?D? c  2>/dev/null
+do
+  case $c in
+    U) USER=$OPTARG ;;
+    K) PASSWORD=$OPTARG ;;
+    O) ORACLE_HOME=$OPTARG ;;
+    H) HOST=$OPTARG ;;
+    P) PORT=$OPTARG ;;
+    S) SID=$OPTARG ;;
+    I) INSTANCE=$OPTARG ;;
+    i) INTERVAL=$OPTARG;;    #has default 10 sec
+    s) YEST_START_DT=$OPTARG;; 
+    e) YEST_END_DT=$OPTARG;; 
+    r) REPORT=1;;   #default is yesterday
+    t) TRACE=$OPTARG;;  
+    f) CSV_FILE_PATH=$OPTARG;;  
+    D) DEBUG=1;;
+    ?) Usage "Invalid arguments";;
+    *) Usage "Invalid arguments";;
+  esac
+done
+
+if [ "X$CSV_FILE_PATH" = "X" ]; then
+  check_mandatory_options
+fi
+
+export ORACLE_HOME=$ORACLE_HOME
+SQL_PLUS_BIN=$ORACLE_HOME/bin/sqlplus
+
+QUERY_FOR_STATE=""
+QUERY_SET_PAGESIZE=" set pagesize 50;"
+QUERY_SET_FEEDBACK=" set feedback on;"
+ 
+if [ "X$REPORT" = "X1" ];then
+  ## generate reports
+  if [ "X$YEST_START_DT" = "X" -o "X$YEST_END_DT" = "X" ];then
+    get_yesterday_date
+  fi
+  ##Query to get Reports
+  REPORT_SET_PAGESIZE="set echo off colsep , pagesize 5000 linesize 1000;" 
+  QUERY_FOR_REPORT="select ORDER_ID,SUBMITTED_DATE,STATE from (SELECT ORDER_ID,SUBMITTED_DATE,STATE  FROM ATGPRDCORE.DCSPP_ORDER WHERE SUBMITTED_DATE >= '$YEST_START_DT' AND SUBMITTED_DATE <= '$YEST_END_DT') sub1 order by 2 asc;"
+
+  echo "Fetching ATG Orders submitted between $YEST_START_DT and $YEST_END_DT..."
+  echo ""
+  echo "Output is created in file $REPORT_CSV_FILE"
+  $SQL_PLUS_BIN $USER/$PASSWORD@"(description=(address=(host=$HOST)(protocol=tcp)(port=$PORT))(connect_data=(sid=$SID)(instancename=$Instance-Name)))" >>$REPORT_CSV_FILE 2>>$QUERY_ERR_FILE <<+ 
+$REPORT_SET_PAGESIZE
+$QUERY_FOR_REPORT
+;
++
+exit 0
+fi
+
+#TO DO: date --date "-$INTERVAL sec" +'%d-%b-%Y %r doesnt work on solaris
+QUERY_START_DT="$(date --date "-$INTERVAL sec" +'%d-%b-%Y %r')"
+QUERY_END_DT="$(date --date "$QUERY_START_DT $INTERVAL sec" +'%d-%b-%Y %r')"
+
+init_target_and_ly_revenue_list    
+
+debug_log "DB ATG Order Stats information Monitor started."
+trace_log 1 "DB ATG Order Stats information Monitor started."
+
+#### LOOP ###
+if [ "X$MON_OPTION" = "X1" ];then
+  debug_log "State information Monitor started."
+  QUERY_FOR_STATE="select upper(state), count(*) from atgprdcore.dcspp_order where LAST_MODIFIED_DATE >= '$TODAY_START_DT' group by upper(state);"
+  make_and_run_query_oracle
+  process_data
+  remove_files
+else
+
+  get_today_date
+  retry_count=0
+  while true
+    do
+      # Test is over. So exit with success status
+      isTestOver $MON_TEST_RUN
+      if [ $? = 1 ]; then
+        exit 0
+      fi
+
+      if [ "$START_DATE" != "$CUR_DATE" ]; then
+        reset_values_for_day
+      fi
+
+      ALL_OK=1
+
+      if [ "X$CSV_FILE_PATH" != "X" ]; then
+        #get value from csv
+        CSV_VALUE=`tail -1 $CSV_FILE_PATH`      
+      fi
+
+    if [ "X$CSV_FILE_PATH" = "X" ]; then
+      get_target_revenue
+      get_ly_revenue
+
+        #QUERY_START_TIMESTAMP_IN_MSECS=`echo $(($(date +%s%N)/1000000))`
+        #CUR_QUERY_END_TIME=$(date '+%s')
+        CUR_QUERY_END_TIME=`echo $(($(date +%s%N)/1000000))` #millisec
+        CUR_QUERY_END_TIME=`echo "$CUR_QUERY_END_TIME / 1000 " | bc`  #sec
+
+        if [ $PREV_QUERY_END_TIME -gt 0 ]; then
+          QUERY_END_TIME_DIFF=`expr $CUR_QUERY_END_TIME - $PREV_QUERY_END_TIME`
+          QUERY_END_TIME_IN_MINS=`echo "$QUERY_END_TIME_DIFF / 60 " | bc`   #min
+          #QUERY_END_TIME_IN_MINS=`expr $QUERY_END_TIME_DIFF / 60`
+          trace_log 2 "QUERY_END_TIME_IN_MINS is : $QUERY_END_TIME_IN_MINS " 
+        fi
+
+        QUERY_END_DATE_TIME=`echo $(date +'%d-%b-%Y %I.%M.%S.%N %p')` 
+
+        #QUERY_FOR_STATE="SELECT ORIGIN_OF_ORDER, SUM (DAMTIN.AMOUNT+ NVL(DOPRI.TAX,0) + NVL(DOPRI.SHIPPING,0) + NVL(KOPRI.TOT_GIFT_WRAP_AMT,0) + NVL(KOPRI.DISCOUNTED_SURCHARGE,0)) AS TOTAL_REV FROM ATGPRDCORE.DCSPP_ORDER DORD JOIN ATGPRDCORE.KLS_ORDER KORD ON KORD.ORDER_ID=DORD.ORDER_ID JOIN ATGPRDCORE.DCSPP_AMOUNT_INFO DAMTIN ON DORD.PRICE_INFO=DAMTIN.AMOUNT_INFO_ID JOIN ATGPRDCORE.DCSPP_ORDER_PRICE DOPRI ON DORD.PRICE_INFO=DOPRI.AMOUNT_INFO_ID JOIN ATGPRDCORE.KLS_ORDER_PRICE_INFO KOPRI ON DORD.PRICE_INFO=KOPRI.AMOUNT_INFO_ID JOIN ATGPRDCORE.KLSPP_BILL_ADDR KBA ON KBA.ID=KORD.BILLING_ADDR_ID WHERE DORD.SUBMITTED_DATE >= '$TODAY_START_DT' AND (DORD.AGENT_ID is null OR DORD.AGENT_ID != '2256198310791356') AND DORD.STATE NOT IN ('FAILED_APPROVAL','N', 'CANCELLED', 'REMOVED') AND KBA.EMAIL NOT LIKE '%kohlsectest.com' AND EMAIL NOT LIKE '%ectest.com' AND KBA.EMAIL != 'null@cybersource.com' group by ORIGIN_OF_ORDER;"
+        #QUERY_FOR_STATE="SELECT ORIGIN_OF_ORDER, SUM (DCSPP_AMOUNT_INFO.AMOUNT) AS TOTAL_REV FROM ATGPRDCORE.DCSPP_ORDER DORD INNER JOIN ATGPRDCORE.DCSPP_AMOUNT_INFO DCSPP_AMOUNT_INFO on DORD.PRICE_INFO=DCSPP_AMOUNT_INFO.AMOUNT_INFO_ID JOIN ATGPRDCORE.KLS_ORDER KORD ON KORD.ORDER_ID=DORD.ORDER_ID JOIN ATGPRDCORE.DCSPP_AMOUNT_INFO DAMTIN ON DORD.PRICE_INFO=DAMTIN.AMOUNT_INFO_ID JOIN ATGPRDCORE.DCSPP_ORDER_PRICE DOPRI ON DORD.PRICE_INFO=DOPRI.AMOUNT_INFO_ID JOIN ATGPRDCORE.KLS_ORDER_PRICE_INFO KOPRI ON DORD.PRICE_INFO=KOPRI.AMOUNT_INFO_ID JOIN ATGPRDCORE.KLSPP_BILL_ADDR KBA ON KBA.ID=KORD.BILLING_ADDR_ID WHERE DORD.SUBMITTED_DATE >= '$TODAY_START_DT' AND (DORD.AGENT_ID is null OR DORD.AGENT_ID != '2256198310791356') AND DORD.STATE NOT IN ('FAILED_APPROVAL','N', 'CANCELLED', 'REMOVED') group by ORIGIN_OF_ORDER;"
+
+        QUERY_FOR_STATE="SELECT ORIGIN_OF_ORDER, SUM (DCSPP_AMOUNT_INFO.AMOUNT) AS TOTAL_REV FROM ATGPRDCORE.DCSPP_ORDER DORD INNER JOIN ATGPRDCORE.DCSPP_AMOUNT_INFO DCSPP_AMOUNT_INFO on DORD.PRICE_INFO=DCSPP_AMOUNT_INFO.AMOUNT_INFO_ID WHERE DORD.SUBMITTED_DATE >= '$TODAY_START_DT' AND DORD.SUBMITTED_DATE < '$QUERY_END_DATE_TIME' AND (DORD.AGENT_ID is null OR DORD.AGENT_ID != '2256198310791356') AND DORD.STATE NOT IN ('FAILED_APPROVAL','N', 'CANCELLED', 'REMOVED') group by ORIGIN_OF_ORDER;"      
+        make_and_run_query_oracle
+        process_revenue
+        remove_files
+
+        ## Execute query 3
+      if [ $ALL_OK -eq 1 ]; then
+        QUERY_FOR_STATE="SELECT 'SUBMITTED' as STATE, COUNT(DORD.ORDER_ID) AS ORDERS, DORD.ORIGIN_OF_ORDER AS ORIGIN FROM ATGPRDCORE.DCSPP_ORDER DORD JOIN ATGPRDCORE.KLS_ORDER KORD ON KORD.ORDER_ID=DORD.ORDER_ID JOIN ATGPRDCORE.KLSPP_BILL_ADDR KBA ON KBA.ID=KORD.BILLING_ADDR_ID WHERE DORD.SUBMITTED_DATE >= '$TODAY_START_DT' AND DORD.SUBMITTED_DATE < '$QUERY_END_DATE_TIME' AND (DORD.AGENT_ID is null OR DORD.AGENT_ID != '2256198310791356') AND DORD.STATE NOT IN ('FAILED_APPROVAL','N', 'CANCELLED', 'REMOVED') GROUP BY DORD.ORIGIN_OF_ORDER ORDER BY DORD.ORIGIN_OF_ORDER ASC;"
+        make_and_run_query_oracle
+        process_submitted_orders
+        remove_files
+      fi
+
+      if [ $ALL_OK -eq 1 ]; then
+        ## Execute query 1
+        QUERY_FOR_STATE="SELECT upper(dord.state), count(*) FROM ATGPRDCORE.DCSPP_ORDER DORD JOIN ATGPRDCORE.KLS_ORDER KORD ON KORD.ORDER_ID=DORD.ORDER_ID JOIN ATGPRDCORE.KLSPP_BILL_ADDR KBA ON KBA.ID=KORD.BILLING_ADDR_ID WHERE DORD.LAST_MODIFIED_DATE >= '$TODAY_START_DT' AND DORD.LAST_MODIFIED_DATE < '$QUERY_END_DATE_TIME' AND (DORD.AGENT_ID is null OR DORD.AGENT_ID != '2256198310791356') AND DORD.STATE NOT IN ('FAILED_APPROVAL','N', 'CANCELLED', 'REMOVED') GROUP BY upper(dord.state);"
+        make_and_run_query_oracle
+        process_data
+        get_start_and_end_date
+        remove_files
+      fi
+
+      if [ $ALL_OK -eq 1 ]; then
+        ## Execute query 2
+        QUERY_FOR_STATE="SELECT DORD.STATE, COUNT(DORD.ORDER_ID) AS ORDERS, DORD.ORIGIN_OF_ORDER AS ORIGIN FROM ATGPRDCORE.DCSPP_ORDER DORD JOIN ATGPRDCORE.KLS_ORDER KORD ON KORD.ORDER_ID=DORD.ORDER_ID JOIN ATGPRDCORE.KLSPP_BILL_ADDR KBA ON KBA.ID=KORD.BILLING_ADDR_ID WHERE DORD.COMPLETED_DATE >= '$TODAY_START_DT' AND DORD.COMPLETED_DATE < '$QUERY_END_DATE_TIME' AND (DORD.AGENT_ID is null OR DORD.AGENT_ID != '2256198310791356') AND DORD.STATE NOT IN ('FAILED_APPROVAL','N', 'CANCELLED', 'REMOVED') GROUP BY DORD.ORIGIN_OF_ORDER, DORD.STATE ORDER BY DORD.ORIGIN_OF_ORDER ASC;"
+        make_and_run_query_oracle
+        process_completed_orders
+        remove_files
+
+        print_data
+        IS_FIRST_SAMPLE="1"
+     fi
+
+  else
+    process_completed_orders_from_csv
+    process_submitted_orders_from_csv
+    process_revenue_frm_csv
+    IS_FIRST_SAMPLE="1"
+    print_data
+  fi
+
+      PREV_QUERY_END_TIME=$CUR_QUERY_END_TIME
+      #PREV_QUERY_END_TIME=$(date '+%s')
+
+      if [ $ALL_OK -eq 0 ]; then
+        retry_count=`expr $retry_count + 1`
+        
+        if [ $retry_count -eq 5 ]; then
+          exit 1
+        fi
+
+        trace_log 1 "Retry count is : $retry_count. Sleeping for 5 seconds" 
+
+        lib_sleep 5
+      else
+        retry_count=0
+        trace_log 2 "Retry count is : $retry_count " 
+        calculate_time_till_midnight
+        trace_log 2 "Sleeping for $SLEEP_INTERVAL seconds" 
+        lib_sleep $SLEEP_INTERVAL
+      fi
+
+   done
+fi
+
+### LOOP END ###
+exit 0
