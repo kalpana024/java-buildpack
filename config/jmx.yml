@@ -15,5 +15,5 @@
 
 # JMX configuration
 ---
-enabled: false
-port: 5000
+enabled: true
+port: 9990
