@@ -1,0 +1,46 @@
+{
+  "Global_Params":{
+    "Alert_rest_endpoint": "https://10.10.50.5",
+	"disable":"false",
+	"CFUrl" :  "http://api.bosh-lite.com",
+	"Interval": "60",
+    "Policy_Name": "Only_for_Rest_Api_Custom",
+    "TestRun_Number":"3248",
+    "Alert_Debug_Level":"0",
+    "Rule_Name" : "Cavisson_KuberNets111",
+    "Severity":"Major",	
+	"ClientId":"cf",
+	"ClientSecret": "",
+	"authorization_endpoint":"https://login.run.pivotal.io/oauth/token",
+	"UserName":"admin",
+	"UserPassword":"admin",
+	"Default_Tier_Server_Instance":{
+			"Tier":"organisation_name","Server":"space_name","Instance":"app_name"
+		},
+		
+	"Mapping_Global_Severity":
+           [
+	         {"type":".*crash","severity":"Minor","Policy_Name":"policy_for_crash","Tier":"organization_guid","Server":"space_guid","Instance":"entity.metadata.instance"},      
+             {"type":".*start","severity":"Minor","Policy_Name":"policy_for_start","Tier":"organization_guid","Server":"space_guid","Instance":"metadata.request.name"},
+             {"type":".*stop","severity":"Major","Policy_Name":"stop""Tier":"organization_guid","Server":"space_guid","Instance":"metadata.request.name"},
+             {"type":".*update","severity":"Minor","Policy_Name":"policy_for_update""Tier":"organization_guid","Server":"space_guid","Instance":"entity.metadata.request.memory"},
+	         {"type":".*delete","severity":"Major","Policy_Name":"policy_for_critical","Tier":"organization_guid","Server":"space_guid","Instance":"metadata.request.name"},
+	         {"type":".*delete-request","severity":"Major","Policy_Name":"policy_for_critical","Tier":"organization_guid","Server":"space_guid","Instance":"metadata.request.name"},
+	         {"type":".*ssh-authorized","severity":"Minor","Policy_Name":"policy_for_critical","Tier":"organization_guid","Server":"space_guid","Instance":"metadata.request.name"},
+	         {"type":".*ssh-unauthorized","severity":"Critical","Policy_Name":"policy_for_critical","Tier":"organization_guid","Server":"space_guid","Instance":"metadata.request.name"}
+			
+          ],
+		 		
+    "filter":{
+		
+		
+            "organization_guid": "6cb37a22-29b1-4e8b-9027-adea3d5f407c",
+              "space_guid": "51546a81-aa71-408f-a841-ac1951a3afbd"
+
+
+	}
+   }
+}
+ 
+ 
+

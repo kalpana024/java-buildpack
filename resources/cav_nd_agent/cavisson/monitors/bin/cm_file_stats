@@ -1,0 +1,99 @@
+# Name : cm_file_stats
+# Purpose : To get last modification time and size of the file
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+export CAV_MON_HOME
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+
+
+INTERVAL_SECS=$MON_FREQUENCY
+
+#debug_log()
+#{
+#  if [ $DEBUG -eq 1 ];then
+#    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+#  fi
+#}
+
+#set_debug_log_file()
+#{
+#if [ "XX$CAV_MON_HOME" != "XX" ];then
+#  DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_ps_data_"$MON_TEST_RUN"_debug.log"
+#else
+#  DEBUG_LOG_FILE="/tmp/cm_ps_data_"$MON_TEST_RUN"_debug.log"
+#  debug_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+#fi
+#}
+
+#Get file status 
+file_status()
+{
+  #Get the file information and further extract the required field
+
+  # "ls -la --time-style=full-iso" this command is used to get full time format with date
+  FILE_INFO=`ls -la --time-style=full-iso $1`
+
+  
+  if [ "X$FILE_INFO" != "X" ]; then
+    FILE_SIZE=$(echo $FILE_INFO | cut -f5 -s -d' ')
+    FILE_MODIFY_DATE=$(echo $FILE_INFO | cut -f6 -s -d' ')
+    FILE_MODIFY_TIME=$(echo $FILE_INFO | cut -f7 -s -d' ' | cut -f1 -s -d'.')
+  fi
+  
+  echo $FILE_SIZE
+  echo $FILE_MODIFY_DATE
+  echo $FILE_MODIFY_TIME
+
+}
+
+#Usage of this tool
+Usage()
+{
+  echo "Usage:"
+  echo "cm_file_stats -f <FILE_NAME> -d <DIR_NAME> -D<DEBUG ENABLE>"
+  echo "e.g cm_file_stats -f </home/netstorm/work/log.txt> -d </home/netstorm/work/> -D"
+  echo "e.g cm_file_stats -f </home/netstorm/work/log.txt> -d </home/netstorm/work/>"
+  echo "Where -f  denotes file name"
+  echo "And -d denotes directory name"
+  exit -1
+}
+
+while getopts f:d:D? arg
+do
+  case $arg in
+    f) file_name=$OPTARG;;
+    d) dir_name=$OPTARG;; 
+    D) DEBUG=1;;
+    *) Usage ;;
+    ?) Usage ;;
+   
+  esac
+done
+
+#checking if there is no argument
+if [ $OPTIND -eq 1 ];then
+  Usage
+fi
+
+#check given file is exist or not
+
+if [ ! -f "$file_name" ];then 
+   echo "File does not exist Please refer Usage"
+   Usage 
+fi
+
+file_status $file_name
+
+

@@ -1,0 +1,270 @@
+# Name    : cm_df
+# Purpose : To get data and vector list of df command
+# Usage   :
+#   cm_df [-v] or [-i <Interval>]
+#     -v: option used to get vector list of df -P
+#     -i: option used to get data on every specified interval
+# For example:
+#   cm_df -v (To get vector list / /boot /dev/shm )
+#   cm_df -i 1000  (To get data after each interval)
+
+#Set CAV_MON_HOME to allow testing from command line
+
+data=""
+data1=""
+os_type=""
+
+CRITICAL=10
+MAJ=20
+MIN=30
+
+DEBUG_LEVEL=0
+
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    export CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d ~/cavisson/monitors ];then
+    export CAV_MON_HOME=~/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+INTERVAL_SECS=$MON_FREQUENCY
+
+display_help_and_exit()
+{
+  echo "Usage: cm_df [-v <vector_prefix>] or [-i <Interval>]"
+  echo "-v: option used to get vector list for Command (df -P). Prefix will added before these vector names"
+  echo "-i: option used for interval (in milliseconds)"
+  echo "-X: used for <vector prefix/noprefix>"
+  echo "-L: used for <header/data>"
+  exit -1
+}
+
+set_error_log_file()
+{
+  if [ "XX$CAV_MON_HOME" != "XX" ];then
+    DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_df_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_df_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+  else
+    DEBUG_LOG_FILE="/tmp/cm_df_"$MON_TEST_RUN"_"$VECTOR_NAME"_debug.log"
+    ERROR_LOG_FILE="/tmp/cm_df_"$MON_TEST_RUN"_"$VECTOR_NAME"_error.log"
+    error_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+  fi
+}
+
+set_error_log_file
+
+debug_log()
+{
+  if [ "X$DEBUG_LEVEL" = "X0" ]; then
+    return
+  else
+    #echo "Debug: $*"
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+check_last_char()
+{
+  given_value=$1
+
+  debug_log "check_last_char Method Called, given_value = [$given_value]"
+
+  if [ "X$given_value" = "X" ];then
+    echo "NULL"
+    return 1
+  fi
+
+  num_char=`echo "$given_value" | wc -c`
+  num_char=`expr $num_char - 1`
+
+  debug_log "num_char = $num_char"
+  echo "`echo "$given_value" | cut -c $num_char`"
+}
+
+convert_into_GB()
+{
+  in_val=$1
+  debug_log "convert_into_GB() Method Called, in_val = [$in_val]"
+
+  last_char=`check_last_char $in_val`
+  debug_log "Last char: last_char = $last_char"
+  if [ "X$last_char" = "XNULL" ];then
+    return 1 
+  fi
+
+  if [ "X$last_char" = "XG" -o "X$last_char" = "Xg" ];then
+    in_val_without_MKG_suffix=`echo "${in_val%?}"`
+    out_val=$in_val_without_MKG_suffix
+  elif [ "X$last_char" = "XT" -o "X$last_char" = "Xt" ];then
+     in_val_without_MKG_suffix=`echo "${in_val%?}"`
+     if [ $BC_AVAILABLE -eq 1 ];then 
+       out_val=`echo "scale=4; $in_val_without_MKG_suffix * 1000" |bc`     #1TB= 1000GB 
+     else
+       out_val=`awk -v "var1=$in_val_without_MKG_suffix" 'BEGIN{printf "%.4f", (var1 * 1000)}'`
+     fi
+  elif [ "X$last_char" = "XM" -o "X$last_char" = "Xm" ];then
+    in_val_without_MKG_suffix=`echo "${in_val%?}"`
+    if [ $BC_AVAILABLE -eq 1 ];then
+      out_val=`echo "scale=4; $in_val_without_MKG_suffix / 1024" |bc`      #1MB = 1/1024 GB
+    else
+      out_val=`awk -v "var1=$in_val_without_MKG_suffix" 'BEGIN{printf "%.4f", (var1 / 1024)}'`
+    fi
+  elif [ "X$last_char" = "XK" -o "X$last_char" = "Xk" ];then
+    in_val_without_MKG_suffix=`echo "${in_val%?}"`
+    if [ $BC_AVAILABLE -eq 1 ];then
+      out_val=`echo "scale=4; $in_val_without_MKG_suffix / 1048576" |bc`   #1KB = 1/(1024 * 1024) GB
+    else
+      out_val=`awk -v "var1=$in_val_without_MKG_suffix" 'BEGIN{printf "%.4f", (var1 / 1048576)}'`
+    fi
+  else #if in byte
+    if [ $BC_AVAILABLE -eq 1 ];then
+      out_val=`echo "scale=4; $in_val / 1073741824" |bc`                      #1byte = 1/(1024 * 1024 *1024)
+    else
+      out_val=`awk -v "var1=$in_val" 'BEGIN{printf "%.4f", (var1 / 1073741824)}'`
+    fi
+  fi
+ 
+  echo -n $out_val
+}
+
+VECTOR_FLAG="0"
+
+#if [ "X$#" = "X0" ];then
+#  display_help_and_exit
+#  exit -1
+#fi
+
+while getopts i:v:D:X:L: arg
+do
+  case $arg in
+    v) VECTOR_FLAG="1"
+       export vector_prefix=$OPTARG
+       ;;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ];then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    i) INTERVAL_SECS=$OPTARG
+       echo $INTERVAL_SECS | grep '^[0-9]*$' 2>&1 >/dev/null 
+       if [ $? != 0 ];then
+         echo "Integer expression must required with -i option!"
+         exit -1
+       fi
+       ;;
+    D) DEBUG_LEVEL=$OPTARG ;;         #has default debug_level 0
+     
+#   *) display_help_and_exit ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+#if [ "X$VECTOR_FLAG" = "X1" -a "XX$INTERVAL_SECS" != "XX" ];then
+#  display_help_and_exit
+#fi
+
+#declare -a FILE_SYS_MOUNTED_ON
+
+if [ "X$INTERVAL_SECS" = "X" ];then
+  INTERVAL_SECS=60
+fi
+
+FILE_SYS_MOUNTED_ON=`df -P -BK | egrep -v "Mounted" | awk '{print $6}'| sort | uniq`
+NUM_FILE_SYS_MOUNTED_ON=`echo "${FILE_SYS_MOUNTED_ON}" | wc -c`
+if [ "X$VECTOR_FLAG" = "X1" ];then  #To get vector list from df -P command
+  i=0
+  while [ $i -lt ${NUM_FILE_SYS_MOUNTED_ON} ]
+  do
+    fa=`expr $i + 1`
+    tp=`echo ${FILE_SYS_MOUNTED_ON} | cut -d " " -f $fa`
+    if [ "X$vector_prefix" = "Xnoprefix" -o "X$vector_prefix" = "X" ]; then
+      echo -n "$i:${tp} "
+    else
+      echo -n "$i:$vector_prefix${tp} "
+    fi
+    i=`expr $i + 1`
+  done
+  echo ""
+else #To get data on every specified interval
+  os_type=`uname`
+  first_time=1
+  while true
+  do
+    i=0
+    #declare -A final_data
+    isTestOver $MON_TEST_RUN
+    # Test is over. So exit with success status
+    if [ $? = 1 ]; then
+      exit 0
+    fi
+    if [ "X$os_type" = "XLinux" ]; then  
+      data_line=`df -P -BK| egrep -v "Filesystem" |sort -k 6|uniq -f 5| awk '{print $6" "$2" "$3" "$4" "$5}'|awk -F'%' '{print $1}' | tr -s " " "|" | tr -s "\n" " "`
+      inode_data_line=`df -iP | egrep -v "Filesystem" |sort -k 6|uniq -f 5| awk '{print $2" "$3" "$4" "$5}'|awk -F'%' '{print $1}' | tr -s " " "|" | tr -s "\n" " "`
+    elif [ "X$os_type" = "XAIX" ]; then
+    #Abhishek : 8/10/2016
+    #Testing of this monitor on AIX enviornment was not done as we didn't get any.
+      data_line=`df -kP | egrep -v "Filesystem" |sort -k 6 | uniq -f 5| awk '{print $6" "$2" "$3" "$4" "$5}'|awk -F'%' '{print $1}'`
+      inode_data_line=`/usr/sysv/bin/df -i | egrep -v "Filesystem" |sort -k 7| uniq -f 6| awk '{print $3" "$4" "$5" "$6}'|awk -F'%' '{print $1}'`
+    fi
+    echo "$data_line"
+    NUM_data_line=`echo "${data_line}" | wc -w`
+    echo $NUM_data_line
+    while [ $i -lt ${NUM_data_line} ]
+    do
+      fa=`expr $i + 1`
+      dtp=`echo ${data_line} | cut -d " " -f $fa`
+      eval "vector$i=`echo ${dtp} | awk -F '|' '{print $1}'`"
+      eval fd1='$'`echo "vector$i"`
+      eval ch='$'`echo "finaldata${fd1}"`
+      if [ "X${ch}" = "X" -a "X$first_time" = "X0" ]; then
+        FILE_SYS_MOUNTED_ON=`echo ${FILE_SYS_MOUNTED_ON} | awk '{${NUM_FILE_SYS_MOUNTED_ON}="${fd1}"}1'`
+      fi
+      
+      itp=`echo ${inode_data_line} | cut -d " " -f $fa`
+      available_pct=`expr 100 - \`echo ${dtp} | cut -d'|' -f 5\``
+      available_pct_inode=`expr 100 - \`echo ${itp} | cut -d'|' -f 4\``
+      rest_inode_data=`echo ${itp} | awk -F'|' '{print $1,$2,$3}'`
+      
+      #final_data[${vector[$i]}]=
+      fdtp="`convert_into_GB \`echo ${dtp} | cut -d'|' -f 2\`` `convert_into_GB \`echo ${dtp} | cut -d'|' -f 3\`` `convert_into_GB \`echo ${dtp} | cut -d'|' -f 4\`` `echo $available_pct` $rest_inode_data $available_pct_inode"
+      eval "final_data${fd1}=$fdtp"
+      i=`expr $i + 1`
+    done
+
+    i=0
+    while [ $i -lt ${NUM_FILE_SYS_MOUNTED_ON} ] 
+    do
+      fa=`expr $i + 1`
+      fmtp=`echo ${FILE_SYS_MOUNTED_ON} | cut -d " " -f $fa`
+      eval fdtp='$'`echo "final_data${fmtp}"`
+      if [ "X$vector_prefix" = "Xnoprefix" -o "X$vector_prefix" = "X" ]; then
+        fa=`expr $i + 1`
+        fmtp=`echo ${FILE_SYS_MOUNTED_ON} | cut -d " " -f $fa`
+        eval fdtp='$'`echo "final_data${fmtp}"`
+        echo "$i:${fmtp}|${fdtp}"
+      else
+        echo "$i:$vector_prefix${fmtp}|${fdtp}"
+      fi
+
+      # Reset the array so that if any disk gets dismounted then it will continue to show 0
+      #final_data[${FILE_SYS_MOUNTED_ON[$i]}]="0 0 0 0 0 0 0 0"
+      fa=`expr $i + 1`
+      fmtp=`echo ${FILE_SYS_MOUNTED_ON} | cut -d " " -f $fa`
+      eval "final_data${fmtp}=0"
+      i=`expr $i + 1`
+    done
+
+    lib_sleep $INTERVAL_SECS
+    if [ $first_time -eq 1 ]; then
+      first_time=0
+    fi
+  done
+fi
+
+exit 0
