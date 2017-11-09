@@ -75,24 +75,7 @@ show_data()
    
   #Find no. of cpu
   cpu_num=`mpstat -P ALL|grep "CPU)"|awk '{print $(NF-1)}'|tr -d '('`
-  #Counting the number of fields from the average CPU Utilization instead of cumulative, As there are changes in Mpstat command output
-  # from version 9.2 
-  # NOW 
-  #  08:44:50 AM  CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
-  #  08:44:50 AM  all    4.84    0.00    1.27    0.57    0.00    0.01    0.00    0.00    0.00   93.30
-  #  08:44:50 AM    0    5.07    0.00    1.33    0.48    0.00    0.01    0.00    0.00    0.00   93.11
-  #  08:44:50 AM    1    4.67    0.00    1.21    0.47    0.00    0.01    0.00    0.00    0.00   93.64
-  #  08:44:50 AM    2    4.80    0.00    1.27    0.63    0.00    0.01    0.00    0.00    0.00   93.29
-  #  08:44:50 AM    3    4.83    0.00    1.28    0.70    0.00    0.00    0.00    0.00    0.00   93.19#    
-  # BEFORE
-  #  08:24:35 AM  CPU   %user   %nice    %sys %iowait    %irq   %soft  %steal   %idle    intr/s
-  #  08:24:35 AM  all    5.82    0.00    1.35    0.11    0.01    0.23    0.00   92.48   1363.29
-  #  08:24:35 AM    0    0.74    0.00    0.59    0.04    0.00    0.08    0.00   98.55    326.91
-  #  08:24:35 AM    1    0.99    0.00    0.84    0.63    0.00    0.11    0.00   97.43      3.18
-  #  08:24:35 AM    2    0.69    0.00    0.48    0.04    0.00    0.07    0.00   98.73      0.11
-  #  08:24:35 AM    3    1.20    0.01    0.66    0.07    0.00    0.08    0.00   97.97      0.01
-
-  num_of_field=`mpstat -P ALL 1 1|tail -1| awk '{print NF}'`
+  num_of_field=`mpstat -P ALL|tail -1| awk '{print NF}'`
   #echo "num_of_field = $num_of_field"
 
   while true
@@ -120,40 +103,43 @@ show_data()
     # 06:14:52 AM  CPU    %usr   %nice    %sys %iowait    %irq   %soft  %steal  %guest  %gnice   %idle
     # 06:14:52 AM  all    0.68    0.02    0.66    2.40    0.00    0.02    0.00    0.00    0.00   96.22
     # 06:14:52 AM    0    0.64    0.00    0.63    1.86    0.00    0.02    0.00    0.00    0.00   96.85
-
-    arr=(`mpstat -P ALL $INTERVAL_SECS 1|tail -n $cpu_num|tr -s ' ' '_'`)
-    for(( i=0; i<${#arr[@]}; i++ ))
+    
+    arr="`mpstat -P ALL $INTERVAL_SECS 1|tail -n $cpu_num|tr -s ' ' '_'`"
+    #for (( i=0; i<${#arr[@]}; i++ ))
+    for i in $arr
     do 
+      #echo $i
+      #exit
       if [ $num_of_field -eq 12 ]; then
         if [ "X$vector_prefix" = "Xnoprefix" -o "X$vector_prefix" = "X" ]; then
           if [ $intr_field_present -eq 1 ];then
             # Ignore intr field and put 0 for guest
-            echo ${arr[$i]} | awk -F'_' '{printf $2":CPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" ""0"" "$10"\n"}'
+            echo $i | awk -F'_' '{printf $2":CPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" ""0"" "$10"\n"}'
           else
-            echo ${arr[$i]} | awk -F'_' '{printf $2":CPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$12"\n"}'
+            echo $i | awk -F'_' '{printf $2":CPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$12"\n"}'
           fi
         else
           if [ $intr_field_present -eq 1 ];then
             # Ignore intr field and put 0 for guest
-            echo ${arr[$i]} | awk -F'_' '{printf $2":%sCPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" ""0"" "$10"\n",ENVIRON["vector_prefix"]}'
+            echo $i | awk -F'_' '{printf $2":%sCPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" ""0"" "$10"\n",ENVIRON["vector_prefix"]}'
           else
-            echo ${arr[$i]} | awk -F'_' '{printf $2":%sCPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$12"\n",ENVIRON["vector_prefix"]}'
+            echo $i | awk -F'_' '{printf $2":%sCPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$12"\n",ENVIRON["vector_prefix"]}'
           fi
         fi
       else
         if [ "X$vector_prefix" = "Xnoprefix" -o "X$vector_prefix" = "X" ]; then
           if [ $intr_field_present -eq 1 ];then
             # Ignore intr field and put 0 for guest
-            echo ${arr[$i]} | awk -F'_' '{printf $2":CPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" ""0"" "$10"\n"}'
+            echo $i | awk -F'_' '{printf $2":CPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" ""0"" "$10"\n"}'
           else
-            echo ${arr[$i]} | awk -F'_' '{printf $2":CPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11"\n"}'
+            echo $i | awk -F'_' '{printf $2":CPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11"\n"}'
           fi
         else
           if [ $intr_field_present -eq 1 ];then
             # Ignore intr field and put 0 for guest
-            echo ${arr[$i]} | awk -F'_' '{printf $2":%sCPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" ""0"" "$10"\n",ENVIRON["vector_prefix"]}'
+            echo $i | awk -F'_' '{printf $2":%sCPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" ""0"" "$10"\n",ENVIRON["vector_prefix"]}'
           else
-            echo ${arr[$i]} | awk -F'_' '{printf $2":%sCPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11"\n",ENVIRON["vector_prefix"]}'
+            echo $i | awk -F'_' '{printf $2":%sCPU"$2"|"$3" "$4" "$5" "$6" "$7" "$8" "$9" "$10" "$11"\n",ENVIRON["vector_prefix"]}'
           fi
         fi
       fi 
@@ -180,13 +166,14 @@ show_data()
 #CPU0 CPU1 CPU2 CPU3
 show_vectors()
 { 
-  data=(`mpstat -P ALL|tail -n +5|tr -s ' ' '_'`)
-  for(( i=0; i<${#data[@]}; i++ ))
+  data="`mpstat -P ALL|tail -n +5|cut -d ' ' -f2`"
+  #for(( i=0; i<${#data[@]}; i++ ))
+  for i in $data
   do
     if [ "X$vector_prefix" = "Xnoprefix" -o "X$vector_prefix" = "X" ]; then
-      CPU_LIST+=`echo ${data[$i]} | awk -F'_' '{printf $2":CPU%s ", $2}'`
+      CPU_LIST=`echo "${CPU_LIST} $i:CPU$i"`
     else
-      CPU_LIST+=`echo ${data[$i]} | awk -F'_' '{printf $2":%sCPU%s ", ENVIRON["vector_prefix"], $2}'`
+      CPU_LIST=`echo "${CPU_LIST} $i:${vector_prefix}CPU$i"`
     fi
   done
   echo $CPU_LIST

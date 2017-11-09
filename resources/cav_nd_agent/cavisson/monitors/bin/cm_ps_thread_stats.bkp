@@ -1,0 +1,896 @@
+# Name    : cm_ps_thread_stats
+# Purpose : To get elapsed time, CPU time, memory used, shared memory, size of a process using pid and Number of threads.
+#           This is run once monitor.
+# Usage   :
+#  cm_ps_thread_stats -s <search pattern> -f <vector name format (pid(default), seqno, process)> -X <vector prefix> -L<header/data> -i <interval> -D" -t <threshold> -d <delete vector>
+
+#    -s: option will specify the pattern that is used to search and return the pid of the process.
+#    -f: option will specify the vector name format which is pid by default, it could be pid, seqno or process.
+#    -X: option will specify the vector prefix which is attached with header or data to return a vector name.
+#    -L: option will specify the header or data.
+#    -t: threshold
+#    -d: delete vector flag
+#    -i: interval(in seconds). Default is 10 seconds
+#    -D: option is to enable debug.
+#
+# Modification: 11/04/2015 
+#               Maninder Singh: Bring vector and data for every instance of given search pattern.
+
+# 1 Day = 24*60*60 = 86400 secs
+# 1 Hour = 60*60
+# 1 Min = 60
+DAY_IN_SECS=86400
+HRS_IN_SEC=3600
+MIN_IN_SEC=60
+PROCESS_ID=""
+COMMAND=""
+PS_CMD=""
+CMD_OUTPUT=""
+FIELD_1=""
+FIELD_2=""
+FIELD_3=""
+FIELD_4=""
+ELAPSED_TIME=""
+TIME=""
+VIRTUAL_PROCESS_SIZE=""
+RESIDENT_SET_SIZE=""
+CPU_TIME_PER=""
+declare PREV_CPU_TIME[] 2>/dev/null	#declaring array PREV_CPU_TIME[] to store previous cpu time for every instance of search pattern
+unset PREV_CPU_TIME[*]
+MEMORY_USED=""
+NUMBER_OF_THREADS=""
+DEBUG=0
+FLAG=0
+PS_CMD_FOR_DATA=""
+PID="$$"
+write_flag_not_run=0
+write_flag_more=0
+OS_NAME=`uname`
+
+PID_FROM_FILE_OPTION=0
+PS_CMD_FOR_DATA=""
+BIT_SET_AFTER_SLEEP=0
+E_O_NUM=0
+
+DELETE_VECTOR_FLAG=0
+THRESHOLD=0
+declare CPU_THRESHOLD_CHK[] 2>/dev/null	
+unset CPU_THRESHOLD_CHK[*]
+
+#Variables used while converting this custom monitor to dynamic vector monitor
+vector_prefix=""
+VECTOR_FLAG="0"
+
+MAX_PID_RANGE=`cat /proc/sys/kernel/pid_max`
+ID=0
+
+#For timestamp calculations
+BEFORE_WRITE_TIMESTAMP=0 
+AFTER_WRITE_TIMESTAMP=0
+TIMESTAMP_DIFF=0 
+
+#Set CAV_MON_HOME to allow testing from command line
+if [ "X$CAV_MON_HOME" = "X" ]; then
+  if [ -d /opt/cavisson/monitors ];then
+    CAV_MON_HOME="/opt/cavisson/monitors"
+  elif [ -d $HOME/cavisson/monitors ];then
+    CAV_MON_HOME=$HOME/cavisson/monitors
+  else
+    echo "CAV_MON_HOME is not set"
+    exit -1
+  fi
+fi
+
+export CAV_MON_HOME
+
+. $CAV_MON_HOME/bin/ns_check_monitor_func.sh
+INTERVAL_SECS=$MON_FREQUENCY
+
+#Linux,AIX
+if [ "X$OS_NAME" = "XAIX" ]; then
+  SYS_MEM=`svmon -G`
+  TOTAL_MEM=`echo $SYS_MEM | $AWK_CMD -F' ' '{print $8}'` #frames
+  if [ $BC_AVAILABLE -eq 1 ];then 
+    TOTAL_MEM=`echo " scale=2; $TOTAL_MEM * 4 * 1024" | bc ` #bytes
+  else
+    TOTAL_MEM=`$AWK_CMD -v "var1=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 * 4 * 1024)}'` 
+  fi
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TOTAL_MEM=`echo " scale=2; $TOTAL_MEM / 1024" | bc ` #KB
+  else
+    TOTAL_MEM=`$AWK_CMD -v "var1=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 / 1024)}'`
+  fi
+elif [ "X$OS_NAME" = "XSunOS" ]; then
+  SYS_MEM=`prtconf | grep Mem`
+  TOTAL_MEM=`echo $SYS_MEM | $AWK_CMD -F' ' '{print $3}'` #MB
+  if [ $BC_AVAILABLE -eq 1 ];then
+    TOTAL_MEM=`echo " scale=2; $TOTAL_MEM * 1024" | bc ` #KB
+  else
+    TOTAL_MEM=`$AWK_CMD -v "var1=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 * 1024)}'`
+  fi
+else
+  SYS_MEM=`free -k`
+  TOTAL_MEM=`echo $SYS_MEM | $AWK_CMD -F' ' '{print $8}'`
+fi
+
+#This gives following error in linux. So sending to dev null.
+# Not sure if we need this for other OS
+# : `SEARCH_PATTERN_ARR[]': not a valid identifier
+declare SEARCH_PATTERN_ARR[] 2>/dev/null
+              
+OS_NAME=`uname`
+
+debug_log()
+{
+  if [ $DEBUG -eq 1 ];then
+    echo "`date +'%F %X'`|$*" >> $DEBUG_LOG_FILE
+  fi
+}
+
+info_log()
+{
+  ns_log_event "Information" "$*"
+}
+
+# TODO
+error_log()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+}
+
+error_log_and_exit()
+{
+  ns_log_event "Major" "$*"
+  echo "`date +'%F %X'`|$*" >> $ERROR_LOG_FILE
+  exit -1
+}
+
+error_log_and_console()
+{
+  echo "$*"
+  error_log "$*"
+}
+
+ display_help_and_exit()
+{ 
+  error_log_and_console "Incorrect usage.Usage: cm_ps_thread_stats  -s <search pattern> -f <vector name format (pid[default value], seqno, process)> -X <vector prefix> -L<header/data> -i <interval> -t <threshold> -d <delete vector flag> -D"
+  
+  echo "  -s: option will specify the search pattern to find the pid of the process."
+  echo "  -f: option will specify the vector name format which is pid by default, it could be pid, seqno or process."
+  echo "  -X: option will specify the vector prefix."
+  echo "  -L: option will specify the header or data."
+  echo "  -i: option will specify the interval in seconds."
+  echo "  -t: option will specify the threshod percentage."
+  echo "  -d: option will specify delet vector or not."
+  echo "  -D: option is to enable debug."
+  exit 1
+}
+
+#this method operates on string like HH:MM:SS
+get_time_in_sec()
+{
+   debug_log "get_time_in_sec(): time string = $1"
+   
+   COUNT=`echo $1 | $AWK_CMD -F":" '{print NF}'`
+   if [ $COUNT -eq 1 ];then
+     TIME_STR=`echo "00:00:$1"` 
+   elif [ $COUNT -eq 2 ];then
+     TIME_STR=`echo "00:$1"` 
+   else
+     TIME_STR=$1
+   fi
+  
+   debug_log "get_time_in_sec(): time string(complete) = $TIME_STR"
+
+   HH=`echo $TIME_STR | $AWK_CMD -F":" '{print $1}'`
+   MM=`echo $TIME_STR | $AWK_CMD -F":" '{print $2}'`
+   SS=`echo $TIME_STR | $AWK_CMD -F":" '{print $3}'`
+   
+   TIME_IN_SECS=`expr \( $HH \* $HRS_IN_SEC \) + \( $MM \* $MIN_IN_SEC \) + $SS`
+   debug_log "get_time_in_sec(): time = $TIME_IN_SECS"
+   echo $TIME_IN_SECS
+}
+
+#this method operates on string like DD-HH:MM:SS,
+get_time_in_sec_with_days()
+{
+   STR=$1
+   debug_log "get_time_in_sec_with_days(): time string = $STR" 
+
+   NUM_FIELDS=`echo $1 | $AWK_CMD -F"-" '{ print NF}'`
+
+   if [ $NUM_FIELDS -eq 2 ];then
+     DAY=`echo $STR | $AWK_CMD -F"-" '{ print $1}'`
+     TEMP=`echo $STR | $AWK_CMD -F"-" '{ print $2}'`
+     debug_log "get_time_in_sec_with_days(): time string = $TEMP and NUM_FIELDS = $NUM_FIELDS" 
+     LOCAL_TIME=`get_time_in_sec $TEMP`
+   else
+     DAY=0
+     debug_log "get_time_in_sec_with_days(): time string = $STR and NUM_FIELDS = $NUM_FIELDS" 
+     LOCAL_TIME=`get_time_in_sec $STR`
+    fi
+
+   TOTAL_TIME=`expr \( $DAY \* $DAY_IN_SECS \) + $LOCAL_TIME`
+   debug_log "get_time_in_sec_with_days(): total time in secs = $TOTAL_TIME" 
+   echo $TOTAL_TIME
+}
+
+# This used for both command and search option. 
+create_pid_file_by_cmd()
+{
+  debug_log "create_pid_file_by_cmd(): Called. PROCESS_FILE_BY_COMMAND = $PROCESS_FILE_BY_COMMAND"
+
+  PROCESS_ID=`cat $PROCESS_FILE_BY_COMMAND 2>/dev/null`
+
+  if [ $? -eq 0 -a "XX$PROCESS_ID" != "XX" ];then
+    debug_log "create_pid_file_by_cmd(): Process id file $PROCESS_FILE_BY_COMMAND already exists with PROCESS_ID = $PROCESS_ID"
+
+    # chk process is already running
+    ps -p $PROCESS_ID >/dev/null 2>&1
+    if [ $? -eq 0 ];then
+      debug_log "create_pid_file_by_cmd(): Process $PROCESS_ID is already running."
+      return
+    fi
+  fi
+  #get process is by running command
+  eval $COMMAND >$PROCESS_FILE_BY_COMMAND 2>/dev/null
+
+  if [ $? != 0 ];then
+    error_log_and_exit "Error in the execution of the command $COMMAND"
+  fi
+  #this time have to exit on any error
+  chk_process_file $PROCESS_FILE_BY_COMMAND
+}
+
+more_than_one_ps()
+{
+if [ $write_flag_more -ne 2 ]; then
+  #if [ $search_count -gt 0 ]; then
+  if [ $search_count -gt 1 ]; then
+    error_log "More than one process (`sed '{:q;N;s/\n/ /g;t q}' $PROCESS_FILE`) running with the specified search pattern `get_search_pattern_list`"
+  elif [ "XX$COMMAND" != "XX" ]; then
+    error_log "More than one process id (`sed '{:q;N;s/\n/ /g;t q}' $PROCESS_FILE`) returned by the specified command '$COMMAND'"
+  else
+    error_log "More than one process id (`sed '{:q;N;s/\n/ /g;t q}' $PROCESS_FILE`) in the specified file $PROCESS_FILE is not running."
+    #error_log "More than one process id (`cat $PROCESS_FILE`) in the specified file $PROCESS_FILE is not running."
+  fi
+
+  write_flag_more=2
+fi
+  SET_ERROR=1
+  return
+}
+
+ps_not_running_error()
+{
+
+  #Issue: Multiple process data monitors are running for sear pattern which are not running
+  #Reason:
+  #In this case monitor keeps running but there is no data exchange on socket, means connection remains idle.
+  #And firewall inactivates these idle connections, due to which connection remains active from one side but inactive from another side,
+  #that's why after sending partition switch on these inactive connections, it generates read event, after receiving read event NS go to read data from socket but because cmon does not sends anything so NS got error on read, due to which it closes the connection & add these monitor for recovery.
+  #Connection got close here but process keep running.
+  #Due to this process data monitors where below event is coming gets started after every partition switch. 
+  #Fix: Now taking timestamp, after every 5 minute, cmon will send this event to NS just to keep connection active
+  BEFORE_WRITE_TIMESTAMP=`date '+%s'`
+
+  TIMESTAMP_DIFF=`expr $BEFORE_WRITE_TIMESTAMP - $AFTER_WRITE_TIMESTAMP`
+  if [ $TIMESTAMP_DIFF -gt 300 ]; then #greater than 5 minutes  
+    write_flag_not_run=0
+  fi
+
+if [ $write_flag_not_run -ne 1 ]; then
+  if [ $search_count -gt 0 ]; then
+    info_log "No process running with the specified search pattern `get_search_pattern_list`"
+  elif [ "XX$COMMAND" != "XX" ]; then
+    info_log "No process id returned by the specified command '$COMMAND'"
+  elif [ "XX$PROCESS_ID_ARG" != "XX" ]; then
+    info_log "Process id ($PROCESS_ID_ARG) specified is not running"
+  else
+    if [ -s $PROCESS_FILE ]; then
+      info_log "Process id (`cat $PROCESS_FILE`) in the specified file $PROCESS_FILE is not running."
+    elif [ -f $PROCESS_FILE ]; then
+      info_log "File $PROCESS_FILE is empty."
+    else
+      info_log "File $PROCESS_FILE does not exist."
+    fi
+  fi
+
+  AFTER_WRITE_TIMESTAMP=`date '+%s'`
+  write_flag_not_run=1
+fi
+
+  SET_ERROR=1
+  return
+
+}
+
+chk_process_file()
+{
+  PID_FILE_NAME=$1
+
+  debug_log "chk_process_file() Called. PID_FILE_NAME = $PID_FILE_NAME"
+
+  if [ ! -f $PID_FILE_NAME ]; then
+    ps_not_running_error
+  elif [ "XX$PID_FILE_NAME" != "XX" ];then
+    FILE_WORD_COUNT=`cat $PID_FILE_NAME 2>/dev/null | wc -w`
+    RET=$?
+
+    if [ $RET -ne 0 -o $FILE_WORD_COUNT -eq 0 ];then
+      ps_not_running_error
+    fi
+    # that is bug in AIX machine
+    #if [ "XX$FILE_WORD_COUNT" != "XX1" ];then
+    #  more_than_one_ps
+    #fi
+
+    if [ $SET_ERROR -ne 1 ];then        # If SET_ERROR is not set in function: ps_not_running_error then only move forward else return
+      if [ $FILE_WORD_COUNT != 1 ];then
+        more_than_one_ps
+      else
+        write_flag_more=0
+      fi
+    else
+      #write_flag=0
+      return
+    fi
+
+    if [ $SET_ERROR -ne 1 ];then       # If SET_ERROR is not set in function: more_than_one_ps then only move forward else return
+      PROCESS_ID=`cat $PID_FILE_NAME 2>/dev/null`
+      if [ $? != 0 ];then
+        error_log "Unable to get pid from $PID_FILE_NAME file."
+      fi
+    else
+      return
+    fi
+
+    debug_log "chk_process_file(): PROCESS_ID = $PROCESS_ID from $PID_FILE_NAME file"
+ fi
+}
+
+
+#This function will join prefix with the Array of pid if vector name format is pid
+#output of this funct : <vector_prefix>_pid <vector_prefix>_pid <vector_prefix>_pid
+#get_vectors_using_pid()
+#{
+#  prefix="${vector_prefix}${MON_VECTOR_SEPARATOR}"
+#  if [ "XX$vector_prefix" == "XX" ]; then
+#    echo ${ARRAY_OF_TID[@]}
+#  else
+#    echo ${ARRAY_OF_TID[@]/#/$prefix}
+#  fi
+#}
+
+ps_not_running_error()
+{
+  #Issue: Multiple process data monitors are running for sear pattern which are not running
+  #Reason:
+  #In this case monitor keeps running but there is no data exchange on socket, means connection remains idle.
+  #And firewall inactivates these idle connections, due to which connection remains active from one side but inactive from another side,
+  #that's why after sending partition switch on these inactive connections, it generates read event, after receiving read event NS go to read data from socket but because cmon does not sends anything so NS got error on read, due to which it closes the connection & add these monitor for recovery.
+  #Connection got close here but process keep running.
+  #Due to this process data monitors where below event is coming gets started after every partition switch. 
+  #Fix: Now taking timestamp, after every 5 minute, cmon will send this event to NS just to keep connection active
+  BEFORE_WRITE_TIMESTAMP=`date '+%s'`
+
+  TIMESTAMP_DIFF=`expr $BEFORE_WRITE_TIMESTAMP - $AFTER_WRITE_TIMESTAMP`
+  if [ $TIMESTAMP_DIFF -gt 300 ]; then #greater than 5 minutes  
+    write_flag_not_run=0
+  fi   
+
+if [ $write_flag_not_run -ne 1 ]; then
+  if [ $search_count -gt 0 ]; then
+    info_log "No process running with the specified search pattern `get_search_pattern_list`"
+  elif [ "XX$COMMAND" != "XX" ]; then
+    info_log "No process id returned by the specified command '$COMMAND'"
+  elif [ "XX$PROCESS_ID_ARG" != "XX" ]; then
+    info_log "Process id ($PROCESS_ID_ARG) specified is not running"
+  else
+    if [ -s $PROCESS_FILE ]; then
+      info_log "Process id (`cat $PROCESS_FILE`) in the specified file $PROCESS_FILE is not running."
+    elif [ -f $PROCESS_FILE ]; then
+      info_log "File $PROCESS_FILE is empty."
+    else
+      info_log "File $PROCESS_FILE does not exist."
+    fi
+  fi
+
+  AFTER_WRITE_TIMESTAMP=`date '+%s'`
+  write_flag_not_run=1
+fi
+  
+  SET_ERROR=1
+  return
+}
+
+init_search_data()
+{ 
+  debug_log "Calling set_search_arr()"
+  #Intializing the SEARCH_PATTERN_ARR
+  unset SEARCH_PATTERN_ARR[*]
+  search_count=0
+  set_common_command              #Common command used by both old logic of search pattern and new logic of search pattern
+}
+
+set_ps_cmd()
+{
+  debug_log "set_ps_cmd() Called"
+  if [ "X$OS_NAME" = "XSunOS" ]; then
+    PS_CMD_FOR_DATA="/usr/bin/ps"
+    if [ ! -f /usr/ucb/ps ];then
+      error_log "ps command not found on path /usr/ucb/ps. Hence standard ps command will be used."
+      PS_CMD_FOR_SEARCH="ps -ef" # Do not use ps -lef as need pid at filed 2
+    else
+      PS_CMD_FOR_SEARCH="/usr/ucb/ps -auxwww"
+    fi
+    if [ ! -f /usr/xpg4/bin/grep ];then
+      error_log "grep command not found on path /usr/xpg4/bin/grep. Hence extended regular expression may not be supported."
+      PS_GREP_CMD="/usr/bin/egrep -e"  #Search for a pattern_list(full regular expression that 
+                                       #begins with a -).
+   else
+     PS_GREP_CMD="/usr/xpg4/bin/grep -E"
+   fi
+  else #Linux,AIX
+    PS_CMD_FOR_DATA="ps"
+    PS_CMD_FOR_SEARCH="ps -ef" # Do not use ps -lef as need pid at filed 2
+    #PS_GREP_CMD="grep -e"
+    PS_GREP_CMD="grep -E"      # Fixed bug: 4574
+  fi
+}
+
+set_common_command()
+{
+  debug_log "set_common_command called"
+  COMMON_COMMAND="grep -v cm_ps_data | grep -v cm_jstat_gc | grep -v cm_java_gc_ex | grep -v cm_ps_thread_stats | grep -v cm_heap_object_stats | grep -v grep"
+  debug_log "set_common_command end"
+}
+
+set_ps_file()
+{
+  debug_log "set_ps_file() Called"
+
+  TEMP="cm_ps_thread_stats_${vector_prefix}_"$MON_TEST_RUN""
+  PROCESS_FILE_BY_COMMAND="$CAV_MON_TMP_DIR/$TEMP.pid"
+  >$PROCESS_FILE_BY_COMMAND
+}
+
+get_ps_id()
+{ 
+  debug_log "get_ps_id function called."
+
+  SET_ERROR=0                                # Make it zero in the beginning for every execution, because we are using this variable in order to do return(return -1) fr                                               om any function.
+  FILE_WORD_COUNT=0                          # Total number of PIDs in /tmp/cm_ps_thread_stats__.pid. Make it zero in the beginning for every execution.
+
+  # For -s option
+  if [ $search_count -gt 0 ]; then 
+      set_command_for_search                 # Set COMMAND
+      set_ps_file                            # Set temporary file for PID in /tmp/ directory
+  fi
+ 
+  # Using -f i.e. PID_FROM_FILE_OPTION (not PROCESS_FILE) as PROCESS_FILE variable get used for command also. 
+  if [ $PID_FROM_FILE_OPTION -eq 1 ]; then
+    chk_process_file  $PROCESS_FILE
+  # This is used for both (-s) search pattern and (-c) command.
+  elif [ "XX$COMMAND" != "XX" ];then
+    PROCESS_FILE="$PROCESS_FILE_BY_COMMAND"
+    create_pid_file_by_cmd
+  fi
+
+  if [ $SET_ERROR -eq 1 ];then
+    debug_log "Error: Either more than one process running or no process running."
+    return
+  fi
+
+  create_array_of_tid_data
+
+  #this code will execute onny in case of monitor restart
+  #we are creating this file when monitor stops
+  #on start of monitor will load this file again
+  if [ -f $THREAD_ID_DUMP_FILE ]; then  
+    #save file contents in prev array of TID
+    ARRAY_OF_PREV_TID_DATA=(`awk '{print}' $THREAD_ID_DUMP_FILE`)            
+    if [ ${#ARRAY_OF_PREV_TID_DATA[@]} -gt 0 -a ${#ARRAY_OF_TID_DATA[@]} -gt 0 ]; then
+     chk_and_del_vectors
+    fi
+
+    if [ ${#ARRAY_OF_TID_DATA[@]} -gt 0 ]; then
+      #update prev array
+      copy_orig_array_into_prev
+    fi
+  fi
+}
+
+
+create_array_of_tid_data()
+{
+  debug_log "create_array_of_tid_data called"
+
+  unset ARRAY_OF_TID_DATA[*]
+  unset OUTPUT_ARRAY[*]
+  OUTPUT=""
+
+  i=0
+  tid_idx=0
+  #OUTPUT="ps H -p $PROCESS_ID -o 'tid time etime comm' | sed '1,2d'"
+  OUTPUT=`ps H -p $PROCESS_ID -o 'tid time etime comm' | sed '1,2d' | sed 's/^ *//g' | sed -e 's/  */_/g' | tr '\n'  ' '`
+  OUTPUT_ARRAY=($OUTPUT)
+  for((i = 0; i < ${#OUTPUT_ARRAY[@]}; i++)) 
+  {
+    vector[$i]=`echo ${OUTPUT_ARRAY[$i]} | cut -d '_' -f1`
+    if [ "X${id_arr[${vector[$i]}]}" = "X" ]; then
+      id_arr[${vector[$i]}]=$ID
+      ID=`expr $ID + 1`
+    fi
+
+    #save tid 
+    ARRAY_OF_TID_DATA[$tid_idx]=`echo "${OUTPUT_ARRAY[$i]}" | cut -d'_' -f1`
+    tid_idx=`expr $tid_idx + 1`
+    #save cpu time
+    ARRAY_OF_TID_DATA[$tid_idx]=`echo "${OUTPUT_ARRAY[$i]}" | cut -d'_' -f2`
+    tid_idx=`expr $tid_idx + 1`
+    #save elapsed time
+    ARRAY_OF_TID_DATA[$tid_idx]=`echo "${OUTPUT_ARRAY[$i]}" | cut -d'_' -f3`
+    tid_idx=`expr $tid_idx + 1`
+    #save command from 4th column to end of line whatever present
+    ARRAY_OF_TID_DATA[$tid_idx]=`echo "${OUTPUT_ARRAY[$i]}" | cut -d'_' -f4-`
+    tid_idx=`expr $tid_idx + 1`
+    #initialize threshold with 0
+    ARRAY_OF_TID_DATA[$tid_idx]=0
+    tid_idx=`expr $tid_idx + 1`
+  }
+
+  debug_log "create_array_of_tid_data end"
+}
+
+set_command_for_search()
+{
+  debug_log "Calling method set_command_for_search()"
+  STATIC_COMMAND="$COMMON_COMMAND | $AWK_CMD '{print \$2}'"
+  i=0
+  MULTIPLE_SEARCH_CMD=""
+  while [ $i -lt $search_count ] 
+  do
+    MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  ${SEARCH_PATTERN_ARR[$i]} "`
+    i=`expr $i + 1`
+  done
+  COMMAND="eval $PS_CMD_FOR_SEARCH $MULTIPLE_SEARCH_CMD | $STATIC_COMMAND"
+  debug_log "Value of COMMAND in set_command_for_search() method = $COMMAND"
+}
+
+set_debug_log_file()
+{
+if [ "XX$CAV_MON_HOME" != "XX" ];then
+  DEBUG_LOG_FILE="$CAV_MON_HOME/logs/cm_ps_thread_stats_"$MON_TEST_RUN"_"${vector_prefix}"_debug.log"
+  ERROR_LOG_FILE="$CAV_MON_HOME/logs/cm_ps_thread_stats_"$MON_TEST_RUN"_"${vector_prefix}"_error.log"
+else
+  DEBUG_LOG_FILE="/tmp/cm_ps_thread_stats_"$MON_TEST_RUN"_"${vector_prefix}"_debug.log"
+  ERROR_LOG_FILE="/tmp/cm_ps_thread_stats_"$MON_TEST_RUN"_"${vector_prefix}"_error.log"
+  debug_log "CAV_MON_HOME is not exported, putting logs to /tmp/."
+fi
+}
+
+calc_final_ps_data()
+{
+  tid_idx=$1 #tid index
+  CPU_TIME_PER=0 #initialize
+
+  debug_log "calc_final_ps_data function is called."
+
+  #set rest index for 'time etime comm threshold'
+  tid=${ARRAY_OF_TID_DATA[$tid_idx]}
+  time_idx=`expr $tid_idx + 1`
+  etime_idx=`expr $tid_idx + 2`
+  comm_idx=`expr $tid_idx + 3`
+  threshold_idx=`expr $tid_idx + 4`
+  #initialize  
+  if [ "XX${PREV_CPU_TIME[$tid]}" = "XX" ]; then
+    PREV_CPU_TIME[$tid]=0
+  fi  
+
+  Elapsed_Time=${ARRAY_OF_TID_DATA[$etime_idx]}
+  Time=${ARRAY_OF_TID_DATA[$time_idx]}
+
+  ELAPSED_TIME=`get_time_in_sec_with_days $Elapsed_Time`
+  TIME=`get_time_in_sec_with_days $Time`
+
+
+  #If process restart by any reson theb we will get current cpu time less than previous cpu time
+  debug_log "Current cpu time = $TIME, previous cpu time = ${PREV_CPU_TIME[$tid]}"
+  if [ $BC_AVAILABLE -eq 1 ];then
+    RET=$(echo "$TIME <  ${PREV_CPU_TIME[$tid]}" | bc -l)    
+  else
+    RET=$($AWK_CMD -v "var1=$TIME" -v "var2=${PREV_CPU_TIME[$tid]}" 'BEGIN{flag=var1<var2; printf "%d", flag}')
+  fi
+  if (( $RET ));then
+    PREV_CPU_TIME[$tid]=$TIME
+  else
+    if [ ${PREV_CPU_TIME[$tid]} -eq 0 ]; then	
+      PREV_CPU_TIME[$tid]=$TIME 
+      CPU_TIME_PER=0
+      #return
+    #fi
+    else
+      CPU_TIME_DIFF=`expr $TIME - ${PREV_CPU_TIME[$tid]}`
+      if [ $BC_AVAILABLE -eq 1 ];then
+        CPU_DIFF=`echo " scale = 2; $CPU_TIME_DIFF * 100" | bc`
+      else
+        CPU_DIFF=`$AWK_CMD -v "var1=$CPU_TIME_DIFF" 'BEGIN{printf "%.2f", (var1 * 100)}'`
+      fi
+      if [ $BC_AVAILABLE -eq 1 ];then
+        CPU_TIME_PER=`echo " scale=2; $CPU_DIFF / $INTERVAL_SECS " | bc`
+      else
+        CPU_TIME_PER=`$AWK_CMD -v "var1=$CPU_DIFF" -v "var2=$INTERVAL_SECS" 'BEGIN{printf "%.2f", (var1/var2)}'`
+      fi
+      PREV_CPU_TIME[$tid]=$TIME 
+    fi
+  fi
+
+  #check threshold if greater than only show data for this thread
+  if [ ${ARRAY_OF_TID_DATA[$threshold_idx]} -eq 0 ]; then
+    res=$(awk 'BEGIN{ print "'$THRESHOLD'"<"'$CPU_TIME_PER'" }')
+    res1=$(awk 'BEGIN{ print "'$CPU_TIME_PER'"=="'$THRESHOLD'" }')
+
+    #if [ $CPU_TIME_PER -ge $THRESHOLD ]; then
+    #if [ $BC_AVAILABLE -eq 1 ];then
+    #  Value1=$CPU_TIME_PER
+    #  Value2=$THRESHOLD
+    #  res=`echo "$Value1 > $Value2" | bc `
+    #  res1=`echo "$Value1 == $Value2" | bc `
+      if [ $res -eq 1 -o $res1 -eq 1 ]; then
+        ARRAY_OF_TID_DATA[$threshold_idx]=1  
+      fi
+    #else
+      #if [ $CPU_TIME_PER -ge $THRESHOLD ]; then
+    #fi
+  fi
+}
+
+show_ps_data()
+{
+  if [ "XX$vector_prefix" != "XX" ]; then
+    echo "${id_arr[${tid}]}:${vector_prefix}${MON_VECTOR_SEPARATOR}${ARRAY_OF_TID_DATA[$comm_idx]}_${tid}|${ELAPSED_TIME} $TIME $CPU_TIME_PER"
+  else
+    echo "${id_arr[${tid}]}:${ARRAY_OF_TID_DATA[$comm_idx]}_${tid}|${ELAPSED_TIME} $TIME $CPU_TIME_PER" 
+  fi
+}
+
+get_and_show_ps_data()
+{
+  index=$1
+  debug_log "get_and_show_ps_data function called."
+
+  calc_final_ps_data $index
+  if [ $? -eq 0 ]; then
+    if [ ${ARRAY_OF_TID_DATA[$threshold_idx]} -eq 1 ]; then
+      show_ps_data 
+    fi
+  fi
+}
+
+copy_orig_array_into_prev()
+{
+  #unset prev array
+  unset ARRAY_OF_PREV_TID_DATA[*]
+ 
+  i=0
+  for val in `echo ${ARRAY_OF_TID_DATA[@]}`
+  do
+    ARRAY_OF_PREV_TID_DATA[$i]=${val}
+     i=`expr $i + 1`
+  done
+}
+
+chk_and_del_vectors()
+{
+  DELETE_TID=""
+  DEL_FLAG=0
+  SEND_DEL=0
+
+  i=0
+  j=0
+
+  while true
+  do
+  j=0
+  DEL_FLAG=0
+    while true
+    do
+
+      if [ ${ARRAY_OF_PREV_TID_DATA[$i]} -eq ${ARRAY_OF_TID_DATA[$j]} ]; then 
+        DEL_FLAG=1
+        break
+      fi   
+
+      j=`expr $j + 5`
+      if [ $j -eq ${#ARRAY_OF_TID_DATA[@]} ]; then
+        break
+      fi
+    done
+
+    if [ $DEL_FLAG -eq 0 ]; then
+       #if data once reported but delet flag not set then do not delete this thread
+      t_indx=`expr $i + 4` #for threshold
+      c_indx=`expr $i + 3` #for command
+      if [ ${ARRAY_OF_PREV_TID_DATA[$t_indx]} -eq 1 ]; then
+
+        #first send 0 then delete thread
+        if [ "XX$vector_prefix" != "XX" ]; then
+          echo "${id_arr[${ARRAY_OF_PREV_TID_DATA[$i]}]}:${vector_prefix}${MON_VECTOR_SEPARATOR}${ARRAY_OF_PREV_TID_DATA[$c_indx]}_${ARRAY_OF_PREV_TID_DATA[$i]}|0 0 0"
+        else
+          echo "${id_arr[${ARRAY_OF_PREV_TID_DATA[$i]}]}:${ARRAY_OF_PREV_TID_DATA[$c_indx]}_${ARRAY_OF_PREV_TID_DATA[$i]}|0 0 0"
+        fi
+
+        if [ $DELETE_VECTOR_FLAG -eq 1 ]; then
+          if [ $SEND_DEL -eq 1 ]; then
+            if [ "XX$vector_prefix" != "XX" ]; then
+              DELETE_TID="$DELETE_TID ${vector_prefix}${MON_VECTOR_SEPARATOR}${ARRAY_OF_PREV_TID_DATA[$c_indx]}_${ARRAY_OF_PREV_TID_DATA[$i]}"
+            else
+              DELETE_TID="$DELETE_TID ${ARRAY_OF_PREV_TID_DATA[$c_indx]}_${ARRAY_OF_PREV_TID_DATA[$i]}"
+            fi
+          else
+            if [ "XX$vector_prefix" != "XX" ]; then
+              DELETE_TID="${vector_prefix}${MON_VECTOR_SEPARATOR}${ARRAY_OF_PREV_TID_DATA[$c_indx]}_${ARRAY_OF_PREV_TID_DATA[$i]}"
+            else
+              DELETE_TID="${ARRAY_OF_PREV_TID_DATA[$c_indx]}_${ARRAY_OF_PREV_TID_DATA[$i]}"
+            fi
+          fi
+          SEND_DEL=1
+        fi
+      fi
+    fi
+ 
+
+    i=`expr $i + 5`
+    if [ $i -eq ${#ARRAY_OF_PREV_TID_DATA[@]} ]; then
+      break
+    fi
+  done
+
+
+  if [ $SEND_DEL -eq 1 ]; then
+    echo "DELETE_VECTOR|${DELETE_TID}"
+  fi
+
+}
+
+dump_data()
+{   
+  if [ ${#ARRAY_OF_TID_DATA[@]} -gt 0 ]; then
+    echo ${ARRAY_OF_TID_DATA[@]} > $THREAD_ID_DUMP_FILE 
+  fi
+}
+
+#function to get and show data for dvm using pid
+show_data()
+{
+  debug_log "show_data function called."
+
+  while true
+  do
+    #Test is over.So exit with success status.
+    isTestOver $MON_TEST_RUN
+    if [ $? -eq 1 ]; then
+      #dump thread data
+      dump_data
+      exit 0
+    fi
+
+    #check if parent is still running 
+    ps -p $PROCESS_ID >/dev/null 2>&1
+    if [ $? -ne 0 ];then
+      debug_log "process $PROCESS_ID is not running"
+      get_ps_id
+      unset PREV_CPU_TIME[*] 
+    else
+      debug_log " process $PROCESS_ID is running"
+      create_array_of_tid_data
+    fi
+
+    NUM_OF_THREADS=${#ARRAY_OF_TID_DATA[@]}
+    #get and show data of processess one by one
+    for((i = 0; i < $NUM_OF_THREADS; i++)) #increment by 5 because array has value in format 'tid time etime comm threshold'
+    {
+      THREAD_ID=${ARRAY_OF_TID_DATA[i]}; #save value of ith index of array in THREAD_ID variable
+      debug_log "THREAD_ID = ARRAY_OF_TID_DATA[i] and then calling get_and_show_ps_data for that particular pid."
+      get_and_show_ps_data $i
+      i=`expr $i + 4`
+    }
+ 
+    if [ ${#ARRAY_OF_PREV_TID_DATA[@]} -gt 0 -a ${#ARRAY_OF_TID_DATA[@]} -gt 0 ]; then
+      chk_and_del_vectors
+    fi
+
+    if [ ${#ARRAY_OF_TID_DATA[@]} -gt 0 ]; then
+      #update prev array
+      copy_orig_array_into_prev
+    fi
+  
+    #check and dump command
+    dump_data
+
+    #reset
+    unset ARRAY_OF_TID_DATA[*]
+
+    debug_log "sleeping for $INTERVAL_SECS secs"
+    lib_sleep $INTERVAL_SECS
+  done
+
+  debug_log "end of while loop"
+}
+
+show_vector()
+{
+  get_vectors_using_pid 
+}
+
+###########################################################################################################################################
+
+if [ $# -eq 0 ];then
+ display_help_and_exit
+fi
+
+#Must set debug log file in the beginning
+set_debug_log_file
+
+# Set the COMMAND variable (Must be done before parsing options)
+set_ps_cmd
+init_search_data
+
+while getopts p:f:c:s:i:v:X:L:dt:D? arg
+do
+  case $arg in
+    p) PROCESS_ID_ARG="$OPTARG"
+       PROCESS_ID=$PROCESS_ID_ARG
+       FLAG=`expr $FLAG + 1`;;
+    f) PROCESS_FILE="$OPTARG"
+       PID_FROM_FILE_OPTION=1
+       FLAG=`expr $FLAG + 1`;;
+    c) COMMAND="$OPTARG"
+       set_ps_file
+       FLAG=`expr $FLAG + 1`;;
+    s) SEARCH_PATTERN_ARR[search_count]="$OPTARG"
+       if [ $search_count = 0 ];then
+         FLAG=`expr $FLAG + 1`
+       fi
+       search_count=`expr $search_count + 1`;;
+    i) INTERVAL_SECS="$OPTARG";;                             #INTERVAL_SECS in secs
+    D) DEBUG=1;;
+    d) DELETE_VECTOR_FLAG=1;;
+    t) THRESHOLD="$OPTARG";;
+    X) export vector_prefix=$OPTARG
+       ;;
+    L) if [ "X$OPTARG" = "Xheader" -o "X$OPTARG" = "XHEADER" ]; then
+         VECTOR_FLAG="1"
+       fi
+       ;;
+    ?) display_help_and_exit ;;
+  esac
+done
+
+if [ $VECTOR_FLAG -eq  1 ];then #show vector
+  echo "Warning: No vectors."
+  exit 0
+fi
+
+if [ $FLAG -gt 1 ];then
+  echo "Only one of the options -p, -f , -c and -s  can be given at a time !"
+  exit 1
+fi
+
+if [ $FLAG -eq 0 ]; then
+  echo "Atleast one of the options -p, -f , -c and -s is mandatory."
+  exit 1
+fi
+
+if [ "XX$vector_prefix" = "XXnoprefix" ]; then
+  vector_prefix=""
+fi
+
+THREAD_ID_DUMP_FILE="$CAV_MON_HOME/logs/.cm_ps_thread_stats_${vector_prefix}_threadIds.dat"
+
+get_ps_id
+show_data
+
+exit 0
