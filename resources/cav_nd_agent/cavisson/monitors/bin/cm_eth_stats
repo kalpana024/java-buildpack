@@ -1,3 +1,4 @@
+#!/bin/bash
 # Name    : cm_eth_stats
 # Purpose : To Produce n(number of interfaces including loopback) Vector 
 #           and data of network connections of any particular machine. 
@@ -98,49 +99,37 @@ display_help_and_exit()
 }
 
 #Calculate initial value.
-init_netstat_data()
+function init_netstat_data()
 {
-  PRE_VAL=`eval $ETH_LIST`
-  NUM_PREV_VAL=`echo "${PRE_VAL}" | wc -w`
-  #NUM_PREV_VAL=${#PRE_VAL[@]}
+  PRE_VAL=(`eval $ETH_LIST`)
+  NUM_PREV_VAL=${#PRE_VAL[@]}
 }
 
 #Calculate current value, take diff i.e. (current - initial).
 #Make current value as previous value. then do (current - previous).
-get_relative_data()
+function get_relative_data()
 {
-  CUR_VAL=`eval $ETH_LIST`
-  NUM_CUR_VAL=`echo "${CUR_VAL}" | wc -w`
-  #NUM_CUR_VAL=${#CUR_VAL[@]}
+  CUR_VAL=(`eval $ETH_LIST`)
+  NUM_CUR_VAL=${#CUR_VAL[@]}
     
   if [ "X$DEBUG" = "X1" ]; then
     echo "Prev="
-    i=0
-    while [ $i -lt $NUM_CUR_VAL ]
+    for(( i = 0; i<NUM_CUR_VAL; ))
     do
-      j=0
-      while [ $j -lt 16 ]
+      for((j = 0 ; j < 16 ; j++))
       do
-      fa=`expr $i + 1`
-      tp=`echo ${PRE_VAL} | cut -d " " -f $fa`
-      printf "$tp " 
+      printf "${PRE_VAL[$i]} " 
       i=`expr $i + 1`
-      j=`expr $j + 1`
       done
       echo ""
     done
     echo "Cur="
-    i=0
-    while [ $i -lt $NUM_CUR_VAL ]
+    for(( i = 0; i<NUM_CUR_VAL; ))
     do
-      j=0
-      while [ $j -lt 16 ]
+      for((j = 0 ; j < 16 ; j++))
       do
-      fa=`expr $i + 1`
-      ntp=`echo ${CUR_VAL} | cut -d " " -f $fa`
-      printf "$ntp "
+      printf "${CUR_VAL[$i]} "
       i=`expr $i + 1`
-      j=`expr $j + 1`
       done
       echo ""
     done
@@ -152,31 +141,21 @@ get_relative_data()
 #Inter-|   Receive                                                |  Transmit
 # face |bytes packets errs drop fifo frame compressed multicast   |bytes packets errs drop fifo colls carrier compressed
     index=0
-    i=0
-    while [ $i -lt $NUM_PREV_VAL ]
+    for (( i = 0; i < $NUM_PREV_VAL;))
     do
       #This is the calculation for Receive part of command "/proc/net/dev".
-      fa=`expr $i + 1`
-      tp=`echo ${PRE_VAL} | cut -d " " -f $fa`
-      ntp=`echo ${CUR_VAL} | cut -d " " -f $fa`
-      RELATIVE_VAL=`get_relative_value ${ntp} ${tp} $0 NA`
+      RELATIVE_VAL=`get_relative_value ${CUR_VAL[i]} ${PRE_VAL[i]} $0 NA`
        
       # Note - using delay=$INTERVAL_SECS, we are passing shell variable value from $INTERVAL_SECS to awk variable delay
       # Calculate throughput in Kbps using
       #   (Bytes * 8)/(Interval * 1024)
-      va=`expr $index + 1`
-      vtp=`echo ${vector_array} | cut -d " " -f $va`
-      echo -n "${vtp}|"
+      echo -n "${vector_array[$index]}|"
       echo $RELATIVE_VAL | awk -v delay=$INTERVAL_SECS '{printf("%0.3f ", ($1 * 8)/(delay * 1024))}' #Calculation for Received bytes (Kbps) 
       i=`expr $i + 1`
-      j=1
-      while [ $j -lt $NUM_FIELDS ]	# Value of NUM_FIELDS is 8
+      for (( j = 1; j < $NUM_FIELDS;))    # Value of NUM_FIELDS is 8
       do
         #Get relative value for Received packets, errs, drop, fifo, frame, compressed, multicast.
-        fa=`expr $i + 1`
-        tp=`echo ${PRE_VAL} | cut -d " " -f $fa`
-        ntp=`echo ${CUR_VAL} | cut -d " " -f $fa`
-        RELATIVE_VAL=`get_relative_value ${ntp} ${tp} $0 NA`                       
+        RELATIVE_VAL=`get_relative_value ${CUR_VAL[i]} ${PRE_VAL[i]} $0 NA`                       
 
         if [ $THROUGHPUT_MODE -eq 0 ];then
           echo $RELATIVE_VAL | awk -v delay=$INTERVAL_SECS '{printf("%0.3f ", ($1)/(delay))}'
@@ -186,24 +165,18 @@ get_relative_data()
       done
 
       #This is the calculation for Transmit part of command "cat /proc/net/dev".
-      fa=`expr $i + 1`
-      tp=`echo ${PRE_VAL} | cut -d " " -f $fa`
-      ntp=`echo ${CUR_VAL} | cut -d " " -f $fa`
-      RELATIVE_VAL=`get_relative_value ${ntp} ${tp} $0 NA`
+      RELATIVE_VAL=`get_relative_value ${CUR_VAL[i]} ${PRE_VAL[i]} $0 NA`
 
       # Note - using delay=$INTERVAL_SECS, we are passing shell variable value from $INTERVAL_SECS to awk variable delay
       # Calculate throughput in Kbps using
       #   (Bytes * 8)/(Interval * 1024)
       echo $RELATIVE_VAL | awk -v delay=$INTERVAL_SECS '{printf("%0.3f ", ($1 * 8)/(delay * 1024))}'  #Calculation for Transmitted bytes (Kbps)
       i=`expr $i + 1`
-      j=1
-      while [ $j -lt $NUM_FIELDS ]	# Value of NUM_FIELDS is 8
+     
+      for (( j = 1; j < $NUM_FIELDS;))   # Value of NUM_FIELDS is 8
       do
         #Get relative value for Transmitted packets, errs, drop, fifo, frame, compressed, multicast.
-        fa=`expr $i + 1`
-        tp=`echo ${PRE_VAL} | cut -d " " -f $fa`
-        ntp=`echo ${CUR_VAL} | cut -d " " -f $fa`
-        RELATIVE_VAL=`get_relative_value ${ntp} ${tp} $0 NA`
+        RELATIVE_VAL=`get_relative_value ${CUR_VAL[i]} ${PRE_VAL[i]} $0 NA`
 
         if [ $THROUGHPUT_MODE -eq 0 ];then
           echo $RELATIVE_VAL | awk -v delay=$INTERVAL_SECS '{printf("%0.3f ", ($1)/(delay))}'
@@ -214,7 +187,7 @@ get_relative_data()
       echo ""
       index=`expr $index + 1`
     done
-  PRE_VAL=${CUR_VAL}
+  PRE_VAL=(${CUR_VAL[@]})
 }
 
 #if [ "X$#" = "X0" ];then
@@ -269,16 +242,16 @@ init_netstat_data
 #Calculate OS architecture in order to set value of MAX_UNSIGNED_LONG for 32 bits CPU architecture / 64 bits CPU architecture.
 get_os_arch_data_model
 
-#declare -a vector_array
+declare -a vector_array
 
 #To take vector list from netstat -ni command
  # will output iface entries 
   #grep -w "" /proc/net/dev | egrep -v "Inter|face" | awk '{print ENVIRON["vector_prefix"]$1}'|awk -F ':' '{printf $1" "}'
   #Fixed bug: 5733
 if [ "X$vector_prefix" = "Xnoprefix" ]; then
-    vector_array=`grep -w "" /proc/net/dev | egrep -v "Inter|face"|tr -d ' '|awk -F ':' '{printf FNR-1":"$1" "}'`
+    vector_array=(`grep -w "" /proc/net/dev | egrep -v "Inter|face"|tr -d ' '|awk -F ':' '{printf FNR-1":"$1" "}'`)
   else
-    vector_array=`grep -w "" /proc/net/dev | egrep -v "Inter|face" | tr -d ' '|awk -F ':' '{printf FNR-1":%s"$1" ",ENVIRON["vector_prefix"]}'`
+    vector_array=(`grep -w "" /proc/net/dev | egrep -v "Inter|face" | tr -d ' '|awk -F ':' '{printf FNR-1":%s"$1" ",ENVIRON["vector_prefix"]}'`)
 fi
 if [ ! -f /proc/net/dev ];then
    echo "Error: Unable to get data from /proc/net/dev !"
@@ -286,7 +259,7 @@ if [ ! -f /proc/net/dev ];then
 fi
 
 if [ "X$VECTOR_FLAG" = "X1" ];then
- echo "${vector_array}"
+ echo "${vector_array[@]}"
 #this part returns data on every specified interval
 else
   while true
