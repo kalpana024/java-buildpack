@@ -66,18 +66,16 @@ display_help_and_exit()
 #Store initial value in PRE_VAL.
 init_netstat_data()
 {
-  PRE_VAL=`eval $ETH_LIST`
-  NUM_PREV_VAL=`echo "${PRE_VAL}" | wc -w`
-  #NUM_PREV_VAL=${#PRE_VAL[@]}
+  PRE_VAL=(`eval $ETH_LIST`)
+  NUM_PREV_VAL=${#PRE_VAL[@]}
 }
 
 #Calculate current value, take diff i.e. (current - initial).
 ##Make current value as previous value. then do (current - previous).
 get_relative_data()
 {
-  CUR_VAL=`eval $ETH_LIST`
-  NUM_CUR_VAL=`echo "${CUR_VAL}" | wc -w`
-  #NUM_CUR_VAL=${#CUR_VAL[@]}
+  CUR_VAL=(`eval $ETH_LIST`)
+  NUM_CUR_VAL=${#CUR_VAL[@]}
   #Command:netstat -i
   #Output:                                               
   #Name  Mtu  Net/Dest      Address        Ipkts  Ierrs Opkts  Oerrs Collis Queue
@@ -89,28 +87,23 @@ get_relative_data()
        if [ "X$i" != "X0" ];then
          echo ""
        fi
-       va=`expr $index + 1`
-       vtp=`echo ${vector_array} | cut -d " " -f $va`
-       echo -n "${vtp}|"
+       echo -n "${vector_array[$index]}|"
        index=`expr $index + 1`
     fi
-    #To print interfaces name that are stored in array
+    #To print interfaces name that are stored in array 
     mod=`expr $i % $NUM_FIELDS`
     #if [ "$mod" = "0" ]; then
     #  echo -n ${CUR_VAL[i]}"|"
     #else
     if [ "$mod" != "0" ]; then
       #Get relative value for Input packets, Input errs,Output packets, Output errs,Collis,Queue.
-      fa=`expr $i + 1`
-      tp=`echo ${PRE_VAL} | cut -d " " -f $fa`
-      ntp=`echo ${CUR_VAL} | cut -d " " -f $fa`
-      RELATIVE_VAL=`get_relative_value ${ntp} ${tp} $0 NA`
+      RELATIVE_VAL=`get_relative_value ${CUR_VAL[i]} ${PRE_VAL[i]} $0 NA`
       echo $RELATIVE_VAL | $AWK_CMD -v delay=$INTERVAL_SECS '{printf("%0.3f ", ($1)/(delay))}'
     fi
     i=`expr $i + 1`
   done
   echo " "
-  PRE_VAL=${CUR_VAL}
+  PRE_VAL=(${CUR_VAL[@]})
 }
 
 while getopts i:v:X:L:? arg
@@ -144,19 +137,19 @@ ETH_LIST="netstat -i | egrep -v \"Name|^$\" | $AWK_CMD '{printf\$1 \" \" \$5 \" 
 #Save intial Data
 init_netstat_data
 
-#declare -a vector_array
+declare -a vector_array
 
 #Calculate OS architecture in order to set value of MAX_UNSIGNED_LONG for 32 bits CPU architecture / 64 bits CPU architecture.
 get_os_arch_data_model
 
 if [ "X$vector_prefix" = "Xnoprefix" ];then
-    vector_array=`netstat -i | egrep -v "Name|^$" | $AWK_CMD '{printf FNR-1":"$1 " "}'`
+    vector_array=(`netstat -i | egrep -v "Name|^$" | $AWK_CMD '{printf FNR-1":"$1 " "}'`)
   else
-    vector_array=`netstat -i | egrep -v "Name|^$" | $AWK_CMD '{printf FNR-1":"ENVIRON["vector_prefix"]$1 " "}'`
+    vector_array=(`netstat -i | egrep -v "Name|^$" | $AWK_CMD '{printf FNR-1":"ENVIRON["vector_prefix"]$1 " "}'`)
 fi
 
 if [ "X$VECTOR_FLAG" = "X1" ];then
-  echo "${vector_array}"
+  echo "${vector_array[@]}"
 #this part returns data on every specified interval
 else
   index=0

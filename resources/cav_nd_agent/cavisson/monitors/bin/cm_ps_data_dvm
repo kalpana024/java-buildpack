@@ -342,14 +342,14 @@ create_array_of_pid()
 
     i=`expr $i + 1`
   done
-  echo "MULTIPLE_SEARCH_CMD ${MULTIPLE_SEARCH_CMD}"
+
   #eval is required since we have to run this command later
   SET_COMMAND="eval $PS_CMD_FOR_SEARCH $MULTIPLE_SEARCH_CMD | $COMMON_COMMAND"
   SET_COMMAND_FOR_CHILDS="eval $PS_CMD_FOR_SEARCH | $COMMON_COMMAND"
   #Creating ARRAY_OF_PID and SORTED_ARRAY_OF_PID using for loop because, AIX ex, AIX and Solaris does not support brackets i.e. ()
   COMMAND_VAL=`$SET_COMMAND | $AWK_CMD -F' ' '{printf $2" "}'`             #COMMAND_VAL contains all the pids from given search pattern
   debug_log "`echo ${COMMAND_VAL}` Command= `echo ${SET_COMMAND}`"
-  echo "COMMAND_VAL ${COMMAND_VAL}"
+
   for index in `echo $COMMAND_VAL`
   do
     #if [ "X${IS_CHILD[$index]}" = "X" ]; then
@@ -357,7 +357,7 @@ create_array_of_pid()
     #fi
     IS_CHILD[$index]=${IS_CHILD[$index]:=0}
   done
-  echo "IS_CHILD ${IS_CHILD[@]} "
+
   #if monitor_childs flag is set
   if [ ${monitor_childs} -eq 1 ]; then
     for index in `echo $COMMAND_VAL`
@@ -390,16 +390,15 @@ create_array_of_pid()
     j=`expr $j + 1`
   done
   
-  echo "ARRAY_OF_PID ${ARRAY_OF_PID[@]} \n id_arr ${id_arr[@]}"
+
   SORT_COMMAND=`echo ${ARRAY_OF_PID[@]} | tr " " "\n" | sort -n | uniq`      #SORT_COMMAND contains all the sorted pids from given search pattern  #Added uniq to make sure we don't get any duplicate pid
   k=0
-  echo "SORT_COMMAND ${SORT_COMMAND}"
   for idx in `echo $SORT_COMMAND`
   do
     SORTED_ARRAY_OF_PID[$k]=$idx
     k=`expr $k + 1`
   done
-  echo "SORTED_ARRAY_OF_PID ${SORTED_ARRAY_OF_PID[@]}"
+
   NUM_OF_PID=${#SORTED_ARRAY_OF_PID[@]}
 
   if [ $NUM_OF_PID -eq 0 ]; then

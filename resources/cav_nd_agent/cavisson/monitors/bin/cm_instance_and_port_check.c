@@ -378,16 +378,16 @@ static void init_mon()
 
   if ((ipv4_fptr == NULL)) {
     ns_log_event("Critical", "Error in opening /proc/net/tcp file. Monitor data will not be available");
-    close_mon(-1);
   }
   
   ipv6_fptr = fopen(ipv6_file_name, "r");
 
   if ((ipv6_fptr == NULL)) {
-    ns_log_event("Critical", "Error in opening /proc/net/tcp file. Monitor data will not be available");
-    close_mon(-1);
+    ns_log_event("Critical", "Error in opening /proc/net/tcp6 file. Monitor data will not be available");
   }
-
+    if ((ipv4_fptr == NULL) && (ipv6_fptr == NULL)){
+      close_mon(-1);
+    }
 
   if(debug_level)
   {
@@ -692,11 +692,13 @@ int main(int argc, char** argv)
 
     //memset(data_arr, 0, sizeof(int)*127);
     //Read file /proc/net/tcp and print connection state count 
-
-    get_data(ipv4_fptr, num_fields, STATE_OFFSET_IPv4, LOCAL_IP_PORT_OFFSET_IPv4, REMOTE_IP_PORT_OFFSET_IPv4, is_ip_addr_any);
     
+    if(ipv4_fptr)
+    {
+      get_data(ipv4_fptr, num_fields, STATE_OFFSET_IPv4, LOCAL_IP_PORT_OFFSET_IPv4, REMOTE_IP_PORT_OFFSET_IPv4, is_ip_addr_any);
+    }
    
-   if(is_ip_addr_any || (count_of_IPv6 = check_count_for_tcp6(num_fields)) > 0 )
+   if(ipv6_fptr && (is_ip_addr_any || (count_of_IPv6 = check_count_for_tcp6(num_fields)) > 0 ))
    {
       get_data(ipv6_fptr, count_of_IPv6, STATE_OFFSET_IPv6, LOCAL_IP_PORT_OFFSET_IPv6, REMOTE_IP_PORT_OFFSET_IPv6, is_ip_addr_any);
    }

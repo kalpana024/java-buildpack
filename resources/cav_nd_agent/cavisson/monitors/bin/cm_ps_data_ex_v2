@@ -1,4 +1,4 @@
-#Name    : cm_ps_data_ex
+# Name    : cm_ps_data_ex
 # Purpose : To get elapsed time, CPU time, memory used, shared memory, size of a process using pid and Number of threads.
 #           This is run once monitor.
 #           We added run once option in standard_monitor.dat in 3.9.0. 
@@ -131,8 +131,8 @@ fi
 #This gives following error in linux. So sending to dev null.
 # Not sure if we need this for other OS
 # declare: `SEARCH_PATTERN_ARR[]': not a valid identifier
-#declare SEARCH_PATTERN_ARR[] 2>/dev/null
-SEARCH_PATTERN_ARR=""
+declare SEARCH_PATTERN_ARR[] 2>/dev/null
+
               
 OS_NAME=`uname`
 
@@ -317,7 +317,7 @@ create_pid_file_by_cmd()
 
 get_search_pattern_list()
 {
-  echo ${SEARCH_PATTERN_ARR} | cut -d " " -f 1
+  echo ${SEARCH_PATTERN_ARR[0]}
 }
 
 more_than_one_ps()
@@ -445,8 +445,7 @@ init_search_data()
 { 
   debug_log "Calling set_search_arr()"
   #Intializing the SEARCH_PATTERN_ARR
-  #unset SEARCH_PATTERN_ARR[*]
-  SEARCH_PATTERN_ARR=""
+  unset SEARCH_PATTERN_ARR[*]
   search_count=0
   set_common_command              #Common command used by both old logic of search pattern and new logic of search pattern
 }
@@ -534,12 +533,11 @@ validate_max_occurence_index()
 create_array_of_pid()
 {
   debug_log "create_array_of_pid called"
-  i=1
+  i=0
   MULTIPLE_SEARCH_CMD=""
-  while [ $i -le ${search_count} ]
+  while [ $i -lt $search_count ]
   do
-   spa=`echo ${SEARCH_PATTERN_ARR} | cut -d " " -f $i`
-   MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  ${spa} "`
+   MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  ${SEARCH_PATTERN_ARR[$i]} "`
 
     i=`expr $i + 1`
   done
@@ -550,22 +548,24 @@ create_array_of_pid()
   #Creating ARRAY_OF_PID and SORTED_ARRAY_OF_PID using for loop because, AIX ex, AIX and Solaris does not support brackets i.e. ()
   COMMAND_VAL=`$SET_COMMAND | $AWK_CMD -F' ' '{printf $2" "}'`             #COMMAND_VAL contains all the pids from given search pattern
   #Added this on September 01, 2012 by Prachi
-  #j=0
+  j=0
   for index in `echo $COMMAND_VAL`
   do
-    ARRAY_OF_PID=`echo "${ARRAY_OF_PID} $index"`
-    #j=`expr $j + 1`
+    ARRAY_OF_PID[$j]=$index
+    j=`expr $j + 1`
   done
-  SORT_COMMAND=`echo ${ARRAY_OF_PID} | tr " " "\n" | sort`      #SORT_COMMAND contains all the sorted pids from given search pattern
-  #k=0
+
+  SORT_COMMAND=`echo ${ARRAY_OF_PID[@]} | tr " " "\n" | sort`      #SORT_COMMAND contains all the sorted pids from given search pattern
+  k=0
   for idx in `echo $SORT_COMMAND`
   do
-    SORTED_ARRAY_OF_PID=`echo "${SORTED_ARRAY_OF_PID} $idx"`
-    #k=`expr $k + 1`
+    SORTED_ARRAY_OF_PID[$k]=$idx
+    k=`expr $k + 1`
   done
-  NUM_OF_PID=`echo ${SORTED_ARRAY_OF_PID} | wc -w`
 
-  debug_log "SORTED_ARRAY_OF_PID = ${SORTED_ARRAY_OF_PID} and NUM_OF_PID = $NUM_OF_PID"
+  NUM_OF_PID=${#SORTED_ARRAY_OF_PID[@]}
+
+  debug_log "SORTED_ARRAY_OF_PID = ${SORTED_ARRAY_OF_PID[@]} and NUM_OF_PID = $NUM_OF_PID"
   
   debug_log "create_array_of_pid end"  
 }
@@ -582,14 +582,13 @@ set_command_for_search()
 
   #STATIC_COMMAND="grep -v cm_ps_data | grep -v cm_jstat_gc | grep -v cm_java_gc_ex | grep -v grep | $AWK_CMD '{print \$2}'"
   STATIC_COMMAND="$COMMON_COMMAND | $AWK_CMD '{print \$2}'"
-  i=1
+  i=0
   MULTIPLE_SEARCH_CMD=""
-  while [ $i -le $search_count ] 
+  while [ $i -lt $search_count ] 
   do
     #MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | grep -e \"${SEARCH_PATTERN_ARR[$i]}\" "`
     #MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  \"${SEARCH_PATTERN_ARR[$i]}\" "`
-    spa=`echo ${SEARCH_PATTERN_ARR} | cut -d " " -f $i`
-    MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  ${spa} "`
+    MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  ${SEARCH_PATTERN_ARR[$i]} "`
     i=`expr $i + 1`
   done
   #eval is required since we have to run this command later 
@@ -629,15 +628,15 @@ calc_final_ps_data()
   ELAPSED_TIME=`get_time_in_sec_with_days $Elapsed_Time`
   TIME=`get_time_in_sec_with_days $Time`
 
+  #if [ $BC_AVAILABLE -eq 1 ];then
+  #  MEM_DIFF=`echo " scale=2; $RESIDENT_SET_SIZE / $TOTAL_MEM" | bc`
+  #else
+  #  MEM_DIFF=`$AWK_CMD -v "var1=$RESIDENT_SET_SIZE" -v "var2=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 / var2)}'` 
+  #fi
   if [ $BC_AVAILABLE -eq 1 ];then
-    MEM_DIFF=`echo " scale=2; $RESIDENT_SET_SIZE / $TOTAL_MEM" | bc`
+    MEMORY_USED=`echo " scale=3; $RESIDENT_SET_SIZE * 100 / $TOTAL_MEM" | bc `
   else
-    MEM_DIFF=`$AWK_CMD -v "var1=$RESIDENT_SET_SIZE" -v "var2=$TOTAL_MEM" 'BEGIN{printf "%.2f", (var1 / var2)}'` 
-  fi
-  if [ $BC_AVAILABLE -eq 1 ];then
-    MEMORY_USED=`echo " scale=2; $MEM_DIFF * 100" | bc `
-  else
-    MEMORY_USED=`$AWK_CMD -v "var1=$MEM_DIFF" 'BEGIN{printf "%.2f", (var1 * 100)}'`
+    MEMORY_USED=`$AWK_CMD -v "var1=$RESIDENT_SET_SIZE" -v "var2=$TOTAL_MEM" 'BEGIN{printf "%.3f", (var1 * 100 / var2)}'`
   fi
 
   #If process restart by any reson theb we will get current cpu time less than previous cpu time
@@ -647,7 +646,7 @@ calc_final_ps_data()
   else
     RET=$($AWK_CMD -v "var1=$TIME" -v "var2=$PREV_CPU_TIME" 'BEGIN{flag=var1<var2; printf "%d", flag}')
   fi
-  if [ $RET -ne 0 ];then
+  if (( $RET ));then
     PREV_CPU_TIME=$TIME
   else
     if [ $PREV_CPU_TIME -eq 0 ]; then
@@ -667,7 +666,8 @@ calc_final_ps_data()
       CPU_TIME_PER=`$AWK_CMD -v "var1=$CPU_DIFF" -v "var2=$INTERVAL_SECS" 'BEGIN{printf "%.2f", (var1/var2)}'`
     fi
   fi
-  debug_log "ELAPSED_TIME=$Elapsed_Time TIME=$Time VIRTUAL_PROCESS_SIZE=$VIRTUAL_PROCESS_SIZE RESIDENT_SET_SIZE=$RESIDENT_SET_SIZE CPU_TIME_PER=$CPU_TIME_PER MEMORY_USED=$MEMORY_USED NUMBER_OF_THREADS=$NUMBER_OF_THREADS"
+
+ debug_log "ELAPSED_TIME=$Elapsed_Time TIME=$Time VIRTUAL_PROCESS_SIZE=$VIRTUAL_PROCESS_SIZE RESIDENT_SET_SIZE=$RESIDENT_SET_SIZE CPU_TIME_PER=$CPU_TIME_PER MEMORY_USED=$MEMORY_USED NUMBER_OF_THREADS=$NUMBER_OF_THREADS"
 
   #echo $ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE $CPU_TIME_PER $MEMORY_USED "0" $NUMBER_OF_THREADS
   #debug_log "cm_ps_data o/p = '$ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE'"
@@ -677,20 +677,18 @@ calc_final_ps_data()
 
 show_ps_data()
 {
-  #declare Open_files_limit
-  Open_files_limit=$(cat /proc/$PROCESS_ID/limits | grep "Max open files" | tr -s " " | cut -d" " -f4,5)
+  declare Open_files_limit
+  Open_files_limit=($(cat /proc/$PROCESS_ID/limits | grep "Max open files" | tr -s " " | cut -d" " -f4,5))
   #Open_files_hard_limit=`cat /proc/$PROCESS_ID/limits | grep "Max open files" | tr -s " " | cut -d" " -f5`
-  Open_files=`lsof -p $PROCESS_ID 2>/dev/null | wc -l`
-  ofl=`echo ${Open_files_limit} | cut -d " " -f 1`
-  ofl_1=`echo ${Open_files_limit} | cut -d " " -f 2`
+  Open_files=`lsof -p $PROCESS_ID | wc -l 2>/dev/null`
   if [ $BC_AVAILABLE -eq 1 ];then
-    Percentage_open_files_with_soft_limit=`echo "scale=3;$Open_files*100/${ofl}"|bc`
+    Percentage_open_files_with_soft_limit=`echo "scale=3;$Open_files*100/${Open_files_limit[0]}"|bc`
   else
-    Percentage_open_files_with_soft_limit=`awk -v "var1=$Open_files" -v "var2=${ofl}" 'BEGIN{printf "%.3f", ((var1/var2)*100)}'`
+    Percentage_open_files_with_soft_limit=`awk -v "var1=$Open_files" -v "var2=${Open_files_limit[0]}" 'BEGIN{printf "%.3f", ((var1/var2)*100)}'`
   fi
 
   if [ $SET_ERROR -ne 1 ]; then
-    echo $ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE $CPU_TIME_PER $MEMORY_USED $NUMBER_OF_THREADS ${ofl} ${ofl_1} ${Open_files} $Percentage_open_files_with_soft_limit
+    echo $ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE $CPU_TIME_PER $MEMORY_USED $NUMBER_OF_THREADS ${Open_files_limit[0]} ${Open_files_limit[1]} $Open_files $Percentage_open_files_with_soft_limit
     debug_log "cm_ps_data o/p = '$ELAPSED_TIME $TIME $VIRTUAL_PROCESS_SIZE $RESIDENT_SET_SIZE'"
     first_time=1
   fi
@@ -738,8 +736,8 @@ get_ps_id()
 
   # This is used when (-s) search pattern is given with (-O) ORD.
   if [ "X$ORD" != "X" ]; then
-    #SET_ORD=`expr $ORD - 1`                       # -1 because array index starts from zero
-    PROCESS_ID=`echo ${SORTED_ARRAY_OF_PID} | cut -d " " -f ${ORD}`   # PID from SORTED_ARRAY_OF_PID created in function create_array_of_pid()
+    SET_ORD=`expr $ORD - 1`                       # -1 because array index starts from zero
+    PROCESS_ID=${SORTED_ARRAY_OF_PID[$SET_ORD]}   # PID from SORTED_ARRAY_OF_PID created in function create_array_of_pid()
     debug_log "Generated PID is $PROCESS_ID"
   fi
 }
@@ -831,7 +829,7 @@ do
     c) COMMAND="$OPTARG"
        set_ps_file
        FLAG=`expr $FLAG + 1`;;
-    s) SEARCH_PATTERN_ARR="${SEARCH_PATTERN_ARR} $OPTARG"
+    s) SEARCH_PATTERN_ARR[search_count]="$OPTARG"
        if [ $search_count = 0 ];then
          FLAG=`expr $FLAG + 1`  
        fi 

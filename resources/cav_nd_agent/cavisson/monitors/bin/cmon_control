@@ -183,7 +183,7 @@ fi
    #Assumption - only one jdk dir exist in file $JAVA_DIR/.version
    JDK_DIR=`cat $JAVA_DIR/.version`
    if [ -d $JAVA_DIR/$JDK_DIR ];then
-     write_in_logfile_and_on_console "Setting JAVA_HOME as $JAVA_DIR/$JDK_DIR because java installed as part of RPM"
+     write_in_logfile_and_on_console "Setting JAVA_HOME as $JAVA_DIR/$JDK_DIR for cmon service because java is installed as part of cmon RPM"
      #sed -i "s|JAVA_HOME.*|JAVA_HOME=$JAVA_DIR/$JDK_DIR|g" $CAV_MON_HOME/sys/cmon.env
      JAVA_HOME="$JAVA_DIR/$JDK_DIR"
    fi

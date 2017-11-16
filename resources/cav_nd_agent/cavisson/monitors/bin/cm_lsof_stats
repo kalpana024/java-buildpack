@@ -126,12 +126,13 @@ get_open_files_count()
   debug_log "Mehod Called: get_open_files_count()"
 
   #Initialize contents of array to 0 
-  INDEX=0
+  INDEX=0  
   while [ $INDEX -le $MAX_FILE_TYPES ]; do     
-    eval "openFile_count$INDEX=0"
+    openFile_count[$INDEX]=0
     INDEX=`expr $INDEX + 1`
   done
-  #debug_log "Array set to ${openFile_count[@]}  "  
+  debug_log "Array set to ${openFile_count[@]}  "  
+    
   debug_log "Running lsof Command and result is stored in LSOF_OUTPUT"
   #using sed, lines containing process are deleted and character t preceding file_type is removed.
   LSOF_OUTPUT=`lsof $OPTIONS | sed '/^p[0-9]/d; s/^t//' | sort | uniq -c`
@@ -142,7 +143,6 @@ get_open_files_count()
   #
   debug_log "In for loop: to store count of files in Array"
   INDEX=0
-  OT=0
   for FILE_TYPE in `echo $LSOF_OUTPUT`; do     
     REM=`expr $INDEX % 2`    
     if [ $REM -eq 0 ]; then
@@ -153,37 +153,22 @@ get_open_files_count()
     fi
      
     debug_log "In case : INDEX=$INDEX   REM=$REM    FILE_TYPE=$FILE_TYPE"
-#    case $FILE_TYPE in 
-#      "IPv4")openFile_count[1]=$COUNT;;
-#      "IPv6")openFile_count[2]=$COUNT;;
-#      "PIPE")openFile_count[3]=$COUNT;;
-#      "FIFO")openFile_count[4]=$COUNT;;
-#      "DIR")openFile_count[5]=$COUNT;;
-#      "LINK")openFile_count[6]=$COUNT;;
-#      "BLK")openFile_count[7]=$COUNT;;
-#      "CHR")openFile_count[8]=$COUNT;;
-#      "REG")openFile_count[9]=$COUNT;;
-#      "unknown")openFile_count[10]=$COUNT;;
-#      "sock")openFile_count[11]=$COUNT;;
-#      "unix")openFile_count[12]=$COUNT;;
-#      *)openFile_count[13]=`expr ${openFile_count[13]} + $COUNT`;;  #Storing count of other files
-#    esac
-     case ${FILE_TYPE} in
-       "IPv4")openFile_count1=$COUNT;;
-       "IPv6")openFile_count2=$COUNT;;
-       "PIPE")openFile_count3=$COUNT;;
-       "FIFO")openFile_count4=$COUNT;;
-       "DIR")openFile_count5=$COUNT;;
-       "LINK")openFile_count6=$COUNT;;
-       "BLK")openFile_count7=$COUNT;;
-       "CHR")openFile_count8=$COUNT;;
-       "REG")openFile_count9=$COUNT;;
-       "unknown")openFile_count10=$COUNT;;
-       "sock")openFile_count11=$COUNT;;
-       "unix")openFile_count12=$COUNT;;
-       *)openFile_count13=`expr ${openFile_count13} + $COUNT`;;  #Storing count of other files
-     esac
-    openFile_count0=`expr ${openFile_count0} + $COUNT`
+    case $FILE_TYPE in 
+      "IPv4")openFile_count[1]=$COUNT;;
+      "IPv6")openFile_count[2]=$COUNT;;
+      "PIPE")openFile_count[3]=$COUNT;;
+      "FIFO")openFile_count[4]=$COUNT;;
+      "DIR")openFile_count[5]=$COUNT;;
+      "LINK")openFile_count[6]=$COUNT;;
+      "BLK")openFile_count[7]=$COUNT;;
+      "CHR")openFile_count[8]=$COUNT;;
+      "REG")openFile_count[9]=$COUNT;;
+      "unknown")openFile_count[10]=$COUNT;;
+      "sock")openFile_count[11]=$COUNT;;
+      "unix")openFile_count[12]=$COUNT;;
+      *)openFile_count[13]=`expr ${openFile_count[13]} + $COUNT`;;  #Storing count of other files
+    esac
+    openFile_count[0]=`expr ${openFile_count[0]} + $COUNT`
     COUNT=0
     INDEX=`expr $INDEX + 1`
   done  
@@ -200,14 +185,7 @@ show_data()
   #Will print the output in monitor format
   if [ $RFLAG -eq 0 ]; then
     debug_log "In if : monitor mode is on"
-    #echo "${openFile_count[@]}"
-    i=0
-    while [ $i -le $MAX_FILE_TYPES ]; do
-      eval tem='$'`echo "openFile_count$i"`
-      echo -n "$tem "
-      i=`expr $i + 1`
-    done
-    echo
+    echo "${openFile_count[@]}"
   #Will print the output in user format
   else
     debug_log "in else: user mode is on"
@@ -215,20 +193,20 @@ show_data()
     date
     echo ""
     echo "File Type                 Count"
-    echo "IPV4                      ${openFile_count1}"
-    echo "IPV6                      ${openFile_count2}"
-    echo "PIPE                      ${openFile_count3}"
-    echo "FIFO                      ${openFile_count4}"
-    echo "DIR                       ${openFile_count5}"
-    echo "LINK                      ${openFile_count6}"
-    echo "BLK                       ${openFile_count7}"
-    echo "CHR                       ${openFile_count8}"
-    echo "REG                       ${openFile_count9}"
-    echo "unknown                   ${openFile_count10}"
-    echo "sock                      ${openFile_count11}"
-    echo "unix                      ${openFile_count12}"
-    echo "OTHERS                    ${openFile_count13}"
-    echo "Count of All Files        ${openFile_count0}"
+    echo "IPV4                      ${openFile_count[1]}"
+    echo "IPV6                      ${openFile_count[2]}"
+    echo "PIPE                      ${openFile_count[3]}"
+    echo "FIFO                      ${openFile_count[4]}"
+    echo "DIR                       ${openFile_count[5]}"
+    echo "LINK                      ${openFile_count[6]}"
+    echo "BLK                       ${openFile_count[7]}"
+    echo "CHR                       ${openFile_count[8]}"
+    echo "REG                       ${openFile_count[9]}"
+    echo "unknown                   ${openFile_count[10]}"
+    echo "sock                      ${openFile_count[11]}"
+    echo "unix                      ${openFile_count[12]}"
+    echo "OTHERS                    ${openFile_count[13]}"
+    echo "Count of All Files        ${openFile_count[0]}"
     echo ""
   fi
   debug_log "exiting method: show_data"

@@ -66,7 +66,7 @@ PID="$$"
 #This gives following error in linux. So sending to dev null.
 # Not sure if we need this for other OS
 # declare: `SEARCH_PATTERN_ARR[]': not a valid identifier
-#declare SEARCH_PATTERN_ARR[] 2>/dev/null
+declare SEARCH_PATTERN_ARR[] 2>/dev/null
 
 #Set CAV_MON_HOME to allow testing from command line
 if [ "X$CAV_MON_HOME" = "X" ]; then
@@ -245,7 +245,7 @@ create_pid_file_by_cmd()
 
 get_search_pattern_list()
 {
-  echo "${SEARCH_PATTERN_ARR}" | cut -d " " -f 1
+  echo ${SEARCH_PATTERN_ARR[0]}
 }
 
 more_than_one_ps()
@@ -338,7 +338,7 @@ init_search_data()
 { 
   debug_log "Calling set_search_arr()"
   #Intializing the SEARCH_PATTERN_ARR
-  #unset SEARCH_PATTERN_ARR[*]
+  unset SEARCH_PATTERN_ARR[*]
   search_count=0
   set_common_command              #Common command used by both old logic of search pattern and new logic of search pattern
 }
@@ -431,9 +431,7 @@ create_array_of_pid()
   MULTIPLE_SEARCH_CMD=""
   while [ $i -lt $search_count ]
   do
-   fa=`expr $i + 1`
-   spa=`echo ${SEARCH_PATTERN_ARR} | cut -d " " -f $fa`
-   MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  \"${spa}\" "`
+   MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  \"${SEARCH_PATTERN_ARR[$i]}\" "`
     i=`expr $i + 1`
   done
 
@@ -443,26 +441,24 @@ create_array_of_pid()
   #Creating ARRAY_OF_PID and SORTED_ARRAY_OF_PID using for loop because, AIX ex, AIX and Solaris does not support brackets i.e. ()
   COMMAND_VAL=`$SET_COMMAND | $AWK_CMD -F' ' '{printf $2" "}'`             #COMMAND_VAL contains all the pids from given search pattern
   #Added this on September 01, 2012 by Prachi
-  #j=0
-  ARRAY_OF_PID=""
+  j=0
   for index in `echo $COMMAND_VAL`
   do
-    ARRAY_OF_PID=`echo "${ARRAY_OF_PID} $index"`
-    #j=`expr $j + 1`
+    ARRAY_OF_PID[$j]=$index
+    j=`expr $j + 1`
   done
 
-  SORT_COMMAND=`echo ${ARRAY_OF_PID} | tr " " "\n" | sort`      #SORT_COMMAND contains all the sorted pids from given search pattern
-  #k=0
-  SORTED_ARRAY_OF_PID=""
+  SORT_COMMAND=`echo ${ARRAY_OF_PID[@]} | tr " " "\n" | sort`      #SORT_COMMAND contains all the sorted pids from given search pattern
+  k=0
   for idx in `echo $SORT_COMMAND`
   do
-    SORTED_ARRAY_OF_PID=`echo "${SORTED_ARRAY_OF_PID}" $idx`
-    #k=`expr $k + 1`
+    SORTED_ARRAY_OF_PID[$k]=$idx
+    k=`expr $k + 1`
   done
 
-  NUM_OF_PID=`echo ${SORTED_ARRAY_OF_PID} | wc -w`
+  NUM_OF_PID=${#SORTED_ARRAY_OF_PID[@]}
 
-  debug_log "SORTED_ARRAY_OF_PID = ${SORTED_ARRAY_OF_PID} and NUM_OF_PID = $NUM_OF_PID"
+  debug_log "SORTED_ARRAY_OF_PID = ${SORTED_ARRAY_OF_PID[@]} and NUM_OF_PID = $NUM_OF_PID"
   
   debug_log "create_array_of_pid end"  
 }
@@ -483,10 +479,8 @@ set_command_for_search()
   MULTIPLE_SEARCH_CMD=""
   while [ $i -lt $search_count ] 
   do
-    fa=`expr $i + 1`
-    spa=`echo {SEARCH_PATTERN_ARR} | cut -d " " -f $fa`
     #MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | grep -e \"${SEARCH_PATTERN_ARR[$i]}\" "`
-    MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  \"${spa}\" "`
+    MULTIPLE_SEARCH_CMD=`echo "$MULTIPLE_SEARCH_CMD | $PS_GREP_CMD  \"${SEARCH_PATTERN_ARR[$i]}\" "`
     i=`expr $i + 1`
   done
   #eval is required since we have to run this command later 
@@ -567,9 +561,8 @@ get_ps_id()
 
   # This is used when (-s) search pattern is given with (-O) ORD.
   if [ "X$ORD" != "X" ]; then
-    #SET_ORD=`expr $ORD - 1`                       # -1 because array index starts from zero
-    sap=`echo ${SORTED_ARRAY_OF_PID} | cut -d " " -f $ORD`
-    PROCESS_ID=${sap}   # PID from SORTED_ARRAY_OF_PID created in function create_array_of_pid()
+    SET_ORD=`expr $ORD - 1`                       # -1 because array index starts from zero
+    PROCESS_ID=${SORTED_ARRAY_OF_PID[$SET_ORD]}   # PID from SORTED_ARRAY_OF_PID created in function create_array_of_pid()
     debug_log "Generated PID is $PROCESS_ID"
   fi
 }
@@ -666,7 +659,7 @@ do
     c) COMMAND="$OPTARG"
        set_ps_file
        FLAG=`expr $FLAG + 1`;;
-    s) SEARCH_PATTERN_ARR=`echo "$SEARCH_PATTERN_ARR $OPTARG"`
+    s) SEARCH_PATTERN_ARR[search_count]="$OPTARG"
        if [ $search_count = 0 ];then
          FLAG=`expr $FLAG + 1`  
        fi 

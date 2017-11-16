@@ -118,7 +118,6 @@ show_vector()
 any_ip=0
 VECTOR_FLAG=0
 PREFIX=""
-cat /proc/net/tcp | tail -n +2 > /tmp/output_file
 
 while getopts p:i:X:L:? args
 do
@@ -148,6 +147,7 @@ fi
 
 while :
 do
+  cat /proc/net/tcp | tail -n +2 > /tmp/output_file
   process_data
   #If user has given ip:port:instace but none of the given ip:port is in litening mode
   if [ $any_ip -ne 1 ];then
