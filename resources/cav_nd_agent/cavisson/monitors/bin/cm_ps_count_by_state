@@ -66,47 +66,52 @@ show_data()
   #Name: Process state
   #Value:No of Processes in each state
   #process state array
-  var=` ps ax -o state `
-  PSTATE=($var)
+  var=` ps ax -o state | tr -s "\n" " "`
+  PSTATE=$var
   
   #First sample of ps count comes after INTERVAL_SECS(default 10 sec)
   lib_sleep `expr $INTERVAL_SECS + 1` 
-    
+  count=`echo ${PSTATE} | wc -w`
+  #count=`expr $count - 1`
+  i=1
   #checking the state of process in for loop
-  for RUNNING in "${!PSTATE[@]}";
-  do 
-    if [ "${PSTATE[$RUNNING]}" = "S" ]; then
+  #for RUNNING in "${PSTATE}";
+  while [ $i -le $count ]
+  do
+    RUNNING=`echo ${PSTATE} | cut -d " " -f $i `
+    if [ "$RUNNING" = "S" ]; then
       INTERRUPTABLE=`expr $INTERRUPTABLE + 1`
     fi    
 
-    if [ "${PSTATE[$RUNNING]}" = "T" ]; then
+    if [ "$RUNNING" = "T" ]; then
        STOPPABLE=`expr $STOPPABLE + 1` 
     fi
 
-    if [ "${PSTATE[$RUNNING]}" = "Z" ]; then
+    if [ "$RUNNING" = "Z" ]; then
        ZOMBIE=` expr $ZOMBIE + 1 `
     fi
 
-    if [ "${PSTATE[$RUNNING]}" = "R" ]; then
+    if [ "$RUNNING" = "R" ]; then
       RUNNABLE=` expr $RUNNABLE + 1 `
     fi
 
-    if [ "${PSTATE[$RUNNING]}" = "D" ]; then
+    if [ "$RUNNING" = "D" ]; then
       IO=` expr $IO + 1 `
     fi
   
-    if [ "${PSTATE[$RUNNING]}" = "W" ]; then
+    if [ "$RUNNING" = "W" ]; then
       PAGING=` expr $PAGING + 1 `
     fi
    
-    if [ "${PSTATE[$RUNNING]}" = "X" ]; then
+    if [ "$RUNNING" = "X" ]; then
       DEAD=` expr $DEAD + 1 `
     fi
-    
+    i=`expr $i + 1`
    done
-  
+   #count=`echo ${PSTATE} | wc -w`
+   count=`expr $count - 1`
    ## order of states RUNNING INTERRUPTABLE STOPPED ZOMBIE RUNNABLE IO PAGING DEAD
-   echo " $RUNNING $INTERRUPTABLE  $STOPPABLE $ZOMBIE  $RUNNABLE $IO $PAGING $DEAD"
+   echo " $count $INTERRUPTABLE  $STOPPABLE $ZOMBIE  $RUNNABLE $IO $PAGING $DEAD"
 }
 
 remove_file()
