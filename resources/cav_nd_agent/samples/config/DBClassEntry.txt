@@ -13,5 +13,4 @@ org.postgresql.jdbc4.Jdbc4Connection|pgsql
 
 #New Generic Class support for JBoss Application
 org.apache.commons.dbcp.DelegatingPreparedStatement|Prepared
-org.apache.commons.dbcp.DelegatingConnection|jbossConnection
-
+org.apache.commons.dbcp.DelegatingConnection|jbossConnection 
