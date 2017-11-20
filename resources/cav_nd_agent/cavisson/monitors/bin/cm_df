@@ -1,3 +1,4 @@
+#!/bin/bash
 # Name    : cm_df
 # Purpose : To get data and vector list of df command
 # Usage   :

@@ -1,3 +1,4 @@
+#!/bin/bash
 # Name - cm_uptime
 # Purpose - This is a sample custom monitor to get data from uptime command
 # It parses output of uptime and outputs Load avergae data in one line

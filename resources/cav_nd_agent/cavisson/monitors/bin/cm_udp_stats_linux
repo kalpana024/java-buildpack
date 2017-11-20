@@ -1,3 +1,4 @@
+#!/bin/bash
 ################################################################################################
 # Name  : cm_udp_stats_linux 
 # Usage : cm_udp_stats_linux -r(optional) -i <time in sec>

@@ -1,3 +1,4 @@
+#!/bin/bash
 #################################################################################################
 # Name  :  cm_sock_stats
 # Usage :  cm_sock_stats -i <interval in sec(default 10 sec)> -D <debug_level 0/1>

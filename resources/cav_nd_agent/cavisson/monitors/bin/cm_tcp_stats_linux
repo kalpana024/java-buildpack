@@ -1,3 +1,4 @@
+#!/bin/bash
 ################################################################################################
 # Name  : cm_tcp_stats_linux 
 # Usage : cm_tcp_stats_linux -i <time in sec>
